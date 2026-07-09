@@ -24,7 +24,7 @@
 ## Task Graph
 
 ### Task T1
-- [ ] Complete
+- [x] Complete
 - Goal: `../contracts`에 reg 검색 계약 proto(`proto/port/reg/v1/reg.proto`,
   `RegService.Search`: userId/query/topK/conversationId? → chunks[text,
   documentId, documentName, score, metadata])를 정의하고 Python codegen
@@ -45,7 +45,7 @@
 - Parallel-safe: yes
 
 ### Task T2
-- [ ] Complete
+- [x] Complete
 - Goal: reg Python 서비스 스캐폴딩 — pyproject.toml(uv, Python 3.12,
   fastapi/grpcio/docling/sqlalchemy[asyncio]/alembic/pgvector/openai/pytest/ruff),
   `src/reg/config.py`(환경변수 검증: DATABASE_URL, OPENAI_API_KEY,
@@ -71,7 +71,7 @@
 - Parallel-safe: no
 
 ### Task T3
-- [ ] Complete
+- [x] Complete
 - Goal: DB 스키마 + 마이그레이션 — documents(id, user_id, name, mime,
   status[processing|ready|failed], error, timestamps), chunks(id,
   document_id FK cascade, seq, text, metadata jsonb, embedding vector(1536)),
@@ -93,7 +93,7 @@
 - Parallel-safe: no
 
 ### Task T4
-- [ ] Complete
+- [x] Complete
 - Goal: 인제스트 파이프라인 — Docling 파싱(PDF/docx/pptx/xlsx/md/txt) →
   HybridChunker 청킹 → OpenAI text-embedding-3-small 배치 임베딩
   (backoff 재시도, embedder는 fake 주입 가능 인터페이스) → chunks 저장 →
@@ -113,7 +113,7 @@
 - Parallel-safe: yes
 
 ### Task T5
-- [ ] Complete
+- [x] Complete
 - Goal: 검색 경로 + gRPC 서버 — 쿼리 임베딩 → user_id 스코프 pgvector
   cosine top-k 조회, T1 codegen 기반 `RegService.Search` grpcio(aio)
   서비서 구현. userId 누락/불일치 시 빈 결과가 아닌 INVALID_ARGUMENT.
@@ -133,7 +133,7 @@
 - Parallel-safe: yes
 
 ### Task T6
-- [ ] Complete
+- [x] Complete
 - Goal: 내부 HTTP API — POST /documents(멀티파트 업로드, userId 필수,
   즉시 processing 응답 후 T4 워커 위임), GET /documents?userId=,
   GET /documents/{id}, DELETE /documents/{id}(cascade). FastAPI 라우터.
@@ -151,7 +151,7 @@
 - Parallel-safe: yes
 
 ### Task T7
-- [ ] Complete
+- [x] Complete
 - Goal: 기동 배선 통합 + e2e 스모크 — main.py에 HTTP 라우터/gRPC 서비서/
   워커 배선, docker compose로 업로드→ready→gRPC Search 왕복 스모크
   스크립트(`scripts/smoke.py`, 실키 없으면 fake embedder 모드), Search
