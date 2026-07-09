@@ -1,13 +1,11 @@
 [project]
 name = "reg"
 version = "0.1.0"
-description = "RAG ingest/search service: parse -> chunk -> embed -> pgvector, search over gRPC"
+description = "RAG ingest/search service: parse -> chunk -> embed -> pgvector, search over HTTP"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
-    "grpcio",
-    "protobuf",
     "docling",
     "sqlalchemy[asyncio]",
     "asyncpg",

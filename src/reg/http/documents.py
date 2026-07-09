@@ -18,7 +18,6 @@ from fastapi import File
 from fastapi import Form
 from fastapi import HTTPException
 from fastapi import Query
-from fastapi import Response
 from fastapi import UploadFile
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -27,6 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reg.db.models import Document
 from reg.db.models import DocumentStatus
+from reg.http.responses import ApiResponse
+from reg.http.responses import ok
 from reg.ingest.types import IngestJob
 
 
@@ -184,8 +185,16 @@ def create_documents_router(
     router = APIRouter()
     upload_storage = storage or LocalUploadStorage()
 
-    @router.post("/documents", status_code=201, response_model=DocumentResponse)
-    async def upload_document(user_id: UserIdForm, file: DocumentUpload) -> DocumentResponse:
+    @router.post(
+        "/documents",
+        status_code=201,
+        response_model=ApiResponse[DocumentResponse],
+        response_model_exclude={"error"},
+    )
+    async def upload_document(
+        user_id: UserIdForm,
+        file: DocumentUpload,
+    ) -> ApiResponse[DocumentResponse]:
         normalized_user_id = _normalize_user_id(user_id)
         path = await upload_storage.save(file)
         document: DocumentRecord | None = None
@@ -204,32 +213,47 @@ def create_documents_router(
                     user_id=normalized_user_id,
                 )
             raise
-        return _to_response(document)
+        return ok(_to_response(document), status_code=201)
 
-    @router.get("/documents", response_model=list[DocumentResponse])
-    async def list_documents(user_id: UserIdQuery) -> list[DocumentResponse]:
+    @router.get(
+        "/documents",
+        response_model=ApiResponse[list[DocumentResponse]],
+        response_model_exclude={"error"},
+    )
+    async def list_documents(user_id: UserIdQuery) -> ApiResponse[list[DocumentResponse]]:
         documents = await repository.list_documents(user_id=_normalize_user_id(user_id))
-        return [_to_response(document) for document in documents]
+        return ok([_to_response(document) for document in documents])
 
-    @router.get("/documents/{document_id}", response_model=DocumentResponse)
-    async def get_document(document_id: uuid.UUID, user_id: UserIdQuery) -> DocumentResponse:
+    @router.get(
+        "/documents/{document_id}",
+        response_model=ApiResponse[DocumentResponse],
+        response_model_exclude={"error"},
+    )
+    async def get_document(
+        document_id: uuid.UUID,
+        user_id: UserIdQuery,
+    ) -> ApiResponse[DocumentResponse]:
         document = await repository.get_document(
             document_id=document_id,
             user_id=_normalize_user_id(user_id),
         )
         if document is None:
             raise HTTPException(status_code=404, detail="document not found")
-        return _to_response(document)
+        return ok(_to_response(document))
 
-    @router.delete("/documents/{document_id}", status_code=204)
-    async def delete_document(document_id: uuid.UUID, user_id: UserIdQuery) -> Response:
+    @router.delete(
+        "/documents/{document_id}",
+        response_model=ApiResponse[None],
+        response_model_exclude={"error"},
+    )
+    async def delete_document(document_id: uuid.UUID, user_id: UserIdQuery) -> ApiResponse[None]:
         deleted = await repository.delete_document(
             document_id=document_id,
             user_id=_normalize_user_id(user_id),
         )
         if not deleted:
             raise HTTPException(status_code=404, detail="document not found")
-        return Response(status_code=204)
+        return ok(None)
 
     return router
 

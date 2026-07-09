@@ -51,5 +51,6 @@ async def test_repository_query_is_scoped_by_user_id() -> None:
     compiled = str(session_factory.session.statement.compile(dialect=postgresql.dialect()))
     assert "JOIN documents" in compiled
     assert "documents.user_id = %(user_id_1)s" in compiled
+    assert "documents.status = %(status_1)s" in compiled
     assert compiled.count("documents.user_id") == 1
     assert "LIMIT" in compiled

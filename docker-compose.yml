@@ -26,9 +26,6 @@ services:
         required: false
     ports:
       - "8000:8000"
-      - "50051:50051"
-    volumes:
-      - ${CONTRACTS_GEN:-../contracts/gen/python}:/app/contracts-gen:ro
 
 volumes:
   pgdata:

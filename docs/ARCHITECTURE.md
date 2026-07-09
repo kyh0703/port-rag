@@ -4,7 +4,7 @@
 
 - `reg`는 port 생태계의 **RAG 인제스트/검색 서비스**다. 사용자가 올린 파일을
   파싱 → 청킹 → 임베딩해 pgvector에 저장하고, `../voice-agent`가 대화 턴마다
-  호출하는 벡터 검색을 gRPC로 제공한다.
+  호출하는 벡터 검색을 REST로 제공한다.
 - 모든 버전에 공통된 구조적 원리를 기록한다. 버전별 세부 디자인은
   `docs/vN/designs/`에 둔다.
 
@@ -21,10 +21,8 @@
   - `../api` (NestJS): 유일한 업로드 진입점. auth를 소유하고, 검증된
     `userId`와 파일을 reg 내부 HTTP로 전달한다. reg는 외부에 직접
     노출되지 않고 자체 인증을 구현하지 않는다.
-  - `../voice-agent` (LiveKit Agents TS 워커): gRPC 클라이언트. 매 사용자
+  - `../voice-agent` (LiveKit Agents TS 워커): REST 클라이언트. 매 사용자
     발화마다 `Search`를 호출해 top-k 청크를 LLM 컨텍스트에 주입한다.
-  - `../contracts` (buf): reg의 gRPC proto 정의 위치. TS(voice-agent용)와
-    Python(reg 서버용) codegen을 모두 생성한다.
   - OpenAI Embeddings API: `text-embedding-3-small` (1536차원). 인제스트와
     검색 쿼리 임베딩 모두 이 모델 하나로 통일한다(차원/모델 불일치 금지).
   - Docling: PDF/docx/pptx/xlsx/md/txt → 구조화 마크다운 파싱. 서비스
@@ -54,7 +52,5 @@
   - 인제스트 처리량은 v1에서 인프로세스 워커로 충분하다고 가정하고, 병목이
     확인되면 큐/워커 분리는 다음 버전에서 결정한다.
 - 작동 제한:
-  - 스택: Python 3.12+, FastAPI(내부 HTTP), grpcio(aio), Docling,
-    SQLAlchemy(async) + pgvector.
-  - gRPC 계약 변경은 반드시 `../contracts` proto를 먼저 수정하고 양쪽
-    codegen을 재생성한다.
+  - 스택: Python 3.12+, FastAPI(내부 HTTP), Docling, SQLAlchemy(async) +
+    pgvector.

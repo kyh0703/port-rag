@@ -5,13 +5,13 @@ from datetime import UTC
 from datetime import datetime
 from pathlib import Path
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from reg.db.models import DocumentStatus
 from reg.http.documents import DocumentRecord
 from reg.http.documents import create_documents_router
+from reg.http.responses import register_exception_handlers
 
 
 NOW = datetime(2026, 7, 9, 12, 0, tzinfo=UTC)
@@ -95,12 +95,15 @@ def build_client(
     repository: FakeDocumentRepository,
     worker: FakeWorker,
     storage: FakeUploadStorage,
+    *,
+    raise_server_exceptions: bool = True,
 ) -> TestClient:
     app = FastAPI()
+    register_exception_handlers(app)
     app.include_router(
         create_documents_router(repository=repository, worker=worker, storage=storage)
     )
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 def test_post_requires_user_id(tmp_path: Path) -> None:
@@ -112,6 +115,10 @@ def test_post_requires_user_id(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 422
+    body = response.json()
+    assert body["statusCode"] == 422
+    assert body["error"] == "Unprocessable Entity"
+    assert body["data"] is None
 
 
 def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path) -> None:
@@ -128,16 +135,20 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
 
     assert response.status_code == 201
     body = response.json()
-    document_id = uuid.UUID(body["id"])
+    document_id = uuid.UUID(body["data"]["id"])
     assert body == {
-        "id": str(document_id),
-        "userId": "user-a",
-        "name": "notes.md",
-        "mime": "text/markdown",
-        "status": "processing",
-        "error": None,
-        "createdAt": "2026-07-09T12:00:00Z",
-        "updatedAt": "2026-07-09T12:00:00Z",
+        "statusCode": 201,
+        "message": "Created",
+        "data": {
+            "id": str(document_id),
+            "userId": "user-a",
+            "name": "notes.md",
+            "mime": "text/markdown",
+            "status": "processing",
+            "error": None,
+            "createdAt": "2026-07-09T12:00:00Z",
+            "updatedAt": "2026-07-09T12:00:00Z",
+        },
     }
     assert repository.created == [("user-a", "notes.md", "text/markdown")]
     assert len(worker.jobs) == 1
@@ -156,7 +167,7 @@ def test_list_documents_is_scoped_by_user_id(tmp_path: Path) -> None:
         "/documents",
         data={"userId": "user-a"},
         files={"file": ("a.md", b"a", "text/markdown")},
-    ).json()
+    ).json()["data"]
     client.post(
         "/documents",
         data={"userId": "user-b"},
@@ -166,7 +177,11 @@ def test_list_documents_is_scoped_by_user_id(tmp_path: Path) -> None:
     response = client.get("/documents", params={"userId": "user-a"})
 
     assert response.status_code == 200
-    assert response.json() == [user_a]
+    assert response.json() == {
+        "statusCode": 200,
+        "message": "OK",
+        "data": [user_a],
+    }
 
 
 def test_get_document_is_scoped_by_user_id(tmp_path: Path) -> None:
@@ -178,14 +193,26 @@ def test_get_document_is_scoped_by_user_id(tmp_path: Path) -> None:
         "/documents",
         data={"userId": "user-a"},
         files={"file": ("notes.md", b"a", "text/markdown")},
-    ).json()
+    ).json()["data"]
 
-    assert client.get(f"/documents/{document['id']}", params={"userId": "user-b"}).status_code == 404
+    not_found = client.get(f"/documents/{document['id']}", params={"userId": "user-b"})
+
+    assert not_found.status_code == 404
+    assert not_found.json() == {
+        "statusCode": 404,
+        "message": "document not found",
+        "error": "Not Found",
+        "data": None,
+    }
 
     response = client.get(f"/documents/{document['id']}", params={"userId": "user-a"})
 
     assert response.status_code == 200
-    assert response.json() == document
+    assert response.json() == {
+        "statusCode": 200,
+        "message": "OK",
+        "data": document,
+    }
 
 
 def test_delete_document_is_scoped_by_user_id(tmp_path: Path) -> None:
@@ -197,7 +224,7 @@ def test_delete_document_is_scoped_by_user_id(tmp_path: Path) -> None:
         "/documents",
         data={"userId": "user-a"},
         files={"file": ("notes.md", b"a", "text/markdown")},
-    ).json()
+    ).json()["data"]
 
     assert (
         client.delete(f"/documents/{document['id']}", params={"userId": "user-b"}).status_code
@@ -207,7 +234,12 @@ def test_delete_document_is_scoped_by_user_id(tmp_path: Path) -> None:
 
     response = client.delete(f"/documents/{document['id']}", params={"userId": "user-a"})
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert response.json() == {
+        "statusCode": 200,
+        "message": "OK",
+        "data": None,
+    }
     assert uuid.UUID(document["id"]) not in repository.documents
 
 
@@ -215,24 +247,42 @@ def test_read_endpoints_require_user_id(tmp_path: Path) -> None:
     client = build_client(FakeDocumentRepository(), FakeWorker(), FakeUploadStorage(tmp_path))
     document_id = uuid.uuid4()
 
-    assert client.get("/documents").status_code == 422
-    assert client.get(f"/documents/{document_id}").status_code == 422
-    assert client.delete(f"/documents/{document_id}").status_code == 422
+    for response in [
+        client.get("/documents"),
+        client.get(f"/documents/{document_id}"),
+        client.delete(f"/documents/{document_id}"),
+    ]:
+        assert response.status_code == 422
+        body = response.json()
+        assert body["statusCode"] == 422
+        assert body["error"] == "Unprocessable Entity"
+        assert body["data"] is None
 
 
 def test_post_deletes_saved_file_when_document_create_fails(tmp_path: Path) -> None:
     repository = FakeDocumentRepository()
     repository.fail_create = True
     storage = FakeUploadStorage(tmp_path)
-    client = build_client(repository, FakeWorker(), storage)
+    client = build_client(
+        repository,
+        FakeWorker(),
+        storage,
+        raise_server_exceptions=False,
+    )
 
-    with pytest.raises(RuntimeError, match="create failed"):
-        client.post(
-            "/documents",
-            data={"userId": "user-a"},
-            files={"file": ("notes.md", b"alpha", "text/markdown")},
-        )
+    response = client.post(
+        "/documents",
+        data={"userId": "user-a"},
+        files={"file": ("notes.md", b"alpha", "text/markdown")},
+    )
 
+    assert response.status_code == 500
+    assert response.json() == {
+        "statusCode": 500,
+        "message": "Internal server error",
+        "error": "InternalServerError",
+        "data": None,
+    }
     assert storage.saved_paths
     assert not storage.saved_paths[0].exists()
 
@@ -242,14 +292,25 @@ def test_post_deletes_saved_file_when_worker_enqueue_fails(tmp_path: Path) -> No
     worker = FakeWorker()
     worker.fail_enqueue = True
     storage = FakeUploadStorage(tmp_path)
-    client = build_client(repository, worker, storage)
+    client = build_client(
+        repository,
+        worker,
+        storage,
+        raise_server_exceptions=False,
+    )
 
-    with pytest.raises(RuntimeError, match="enqueue failed"):
-        client.post(
-            "/documents",
-            data={"userId": "user-a"},
-            files={"file": ("notes.md", b"alpha", "text/markdown")},
-        )
+    response = client.post(
+        "/documents",
+        data={"userId": "user-a"},
+        files={"file": ("notes.md", b"alpha", "text/markdown")},
+    )
 
+    assert response.status_code == 500
+    assert response.json() == {
+        "statusCode": 500,
+        "message": "Internal server error",
+        "error": "InternalServerError",
+        "data": None,
+    }
     assert storage.saved_paths
     assert not storage.saved_paths[0].exists()

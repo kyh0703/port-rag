@@ -3,7 +3,7 @@
 ## Goal
 
 - 파일 업로드 → Docling 파싱 → 청킹 → 임베딩 → pgvector 저장 파이프라인과
-  사용자 스코프 gRPC Search를 갖춘 reg 서비스 수직 슬라이스를 완성하고
+  사용자 스코프 REST Search를 갖춘 reg 서비스 수직 슬라이스를 완성하고
   검증 가능하게 만든다.
 
 ## References
@@ -16,7 +16,7 @@
 
 ## Workspace
 
-- Branch: feat/v1-rag-ingest-search-mvp
+- Branch: chore/remove-grpc-rest-response
 - Base: main
 - Isolation: required
 - Created by: exec-plan via git-worktree
@@ -25,32 +25,33 @@
 
 ### Task T1
 - [x] Complete
-- Goal: `../contracts`에 reg 검색 계약 proto(`proto/port/reg/v1/reg.proto`,
-  `RegService.Search`: userId/query/topK/conversationId? → chunks[text,
-  documentId, documentName, score, metadata])를 정의하고 Python codegen
-  (remote plugin `buf.build/protocolbuffers/python` + `buf.build/grpc/python`,
-  out `gen/python`)을 buf.gen.yaml에 추가한 뒤 전체 재생성한다.
+- Goal: REST-only 결정으로 `../contracts` reg gRPC 계약/codegen 의존성을
+  제거한다. 검색 계약은 내부 HTTP `POST /search` JSON schema와 공통
+  `ApiResponse` envelope로 관리한다.
 - Depends on:
   - none
 - Write Scope:
-  - ../contracts/proto/port/reg/v1/
-  - ../contracts/buf.gen.yaml
-  - ../contracts/gen/ (재생성 산출물)
+  - src/reg/http/search.py
+  - src/reg/http/responses.py
+  - src/reg/main.py
+  - pyproject.toml
+  - uv.lock
 - Read Context:
-  - ../contracts/proto/port/api/v1/gateway_events.proto (컨벤션 참고)
-  - docs/v1/designs/2026-07-09-v1-rag-ingest-search-mvp.md
+  - ../api/src/shared/api/types/api-response.type.ts
+  - ../api/src/shared/api/interceptors/transform.interceptor.ts
+  - ../api/src/shared/api/filters/http-exception.filter.ts
 - Checks:
-  - cd ../contracts && buf lint
-  - cd ../contracts && buf generate
+  - uv run pytest tests/http/test_search.py
+  - uv run ruff check src/reg/http
 - Parallel-safe: yes
 
 ### Task T2
 - [x] Complete
 - Goal: reg Python 서비스 스캐폴딩 — pyproject.toml(uv, Python 3.12,
-  fastapi/grpcio/docling/sqlalchemy[asyncio]/alembic/pgvector/openai/pytest/ruff),
+  fastapi/docling/sqlalchemy[asyncio]/alembic/pgvector/openai/pytest/ruff),
   `src/reg/config.py`(환경변수 검증: DATABASE_URL, OPENAI_API_KEY,
-  GRPC_PORT, HTTP_PORT), `src/reg/main.py`(FastAPI + gRPC aio 동시 기동
-  뼈대, healthz), Dockerfile, docker-compose.yml(pgvector 포함),
+  HTTP_PORT), `src/reg/main.py`(FastAPI HTTP 기동 뼈대, healthz),
+  Dockerfile, docker-compose.yml(pgvector 포함),
   .env.example.
 - Depends on:
   - none
@@ -114,22 +115,22 @@
 
 ### Task T5
 - [x] Complete
-- Goal: 검색 경로 + gRPC 서버 — 쿼리 임베딩 → user_id 스코프 pgvector
-  cosine top-k 조회, T1 codegen 기반 `RegService.Search` grpcio(aio)
-  서비서 구현. userId 누락/불일치 시 빈 결과가 아닌 INVALID_ARGUMENT.
+- Goal: 검색 경로 + REST 서버 — `POST /search`에서 쿼리 임베딩 →
+  user_id 스코프 pgvector cosine top-k 조회. userId/query 누락은 공통
+  `ApiResponse` 오류 envelope로 반환한다.
 - Depends on:
-  - T1
   - T3
 - Write Scope:
   - src/reg/search/
-  - src/reg/grpc/
+  - src/reg/http/search.py
   - tests/search/
+  - tests/http/test_search.py
 - Read Context:
-  - ../contracts/gen/python/
   - src/reg/db/
+  - ../api/src/shared/api/
 - Checks:
-  - uv run pytest tests/search (스코프 격리 테스트 포함)
-  - uv run ruff check src/reg/search src/reg/grpc
+  - uv run pytest tests/search tests/http/test_search.py
+  - uv run ruff check src/reg/search src/reg/http
 - Parallel-safe: yes
 
 ### Task T6
@@ -137,6 +138,7 @@
 - Goal: 내부 HTTP API — POST /documents(멀티파트 업로드, userId 필수,
   즉시 processing 응답 후 T4 워커 위임), GET /documents?userId=,
   GET /documents/{id}, DELETE /documents/{id}(cascade). FastAPI 라우터.
+  모든 JSON 응답은 `../api`와 같은 ApiResponse envelope를 사용한다.
 - Depends on:
   - T4
 - Write Scope:
@@ -152,8 +154,8 @@
 
 ### Task T7
 - [x] Complete
-- Goal: 기동 배선 통합 + e2e 스모크 — main.py에 HTTP 라우터/gRPC 서비서/
-  워커 배선, docker compose로 업로드→ready→gRPC Search 왕복 스모크
+- Goal: 기동 배선 통합 + e2e 스모크 — main.py에 HTTP 라우터/워커 배선,
+  docker compose로 업로드→ready→REST Search 왕복 스모크
   스크립트(`scripts/smoke.py`, 실키 없으면 fake embedder 모드), Search
   지연 간이 측정 출력.
 - Depends on:
@@ -165,7 +167,6 @@
   - README.md
 - Read Context:
   - src/reg/http/
-  - src/reg/grpc/
   - src/reg/ingest/
 - Checks:
   - docker compose up -d && uv run python scripts/smoke.py
@@ -177,7 +178,6 @@
 
 - 레포가 아직 git 저장소가 아님 — exec-plan 시작 전 `git init` + 초기 커밋
   필요.
-- T1은 교차 레포(../contracts) 쓰기. contracts는 별도 git 저장소이므로
-  worktree 격리 대상이 아니며, 해당 변경은 contracts 레포에서 직접 커밋한다.
+- REST-only 결정으로 `../contracts` 교차 레포 쓰기는 범위에서 제거한다.
 - 청크 크기/오버랩 기본값은 HybridChunker 기본 + max_tokens 512로 시작,
   T4에서 fixture 기반으로 조정 여지.

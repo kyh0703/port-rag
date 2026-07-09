@@ -5,11 +5,18 @@ created_at: 2026-07-09T15:54:43+09:00
 
 # RAG 인제스트 + 검색 MVP
 
+## Update
+
+- 2026-07-09: Search transport는 gRPC/`../contracts`가 아니라 내부 REST
+  `POST /search`와 `ApiResponse` envelope로 변경했다. 이 문서의 초기
+  gRPC/codegen 언급은 배경 기록이며 현재 구현 기준은
+  `docs/v1/plans/rag-ingest-search-mvp.md`와 `docs/ARCHITECTURE.md`를 따른다.
+
 ## Goal
 
 사용자가 올린 파일(PDF/txt·md/Office)을 파싱 → 청킹 → 임베딩해 pgvector에
 저장하고, voice-agent가 대화 턴마다 호출하는 사용자 스코프 벡터 검색을
-gRPC로 제공하는 reg 서비스 v1을 구축한다.
+REST로 제공하는 reg 서비스 v1을 구축한다.
 
 ## Context / Inputs
 

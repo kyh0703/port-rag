@@ -9,7 +9,6 @@ ENV_VARS = [
     "DATABASE_URL",
     "OPENAI_API_KEY",
     "EMBEDDER",
-    "GRPC_PORT",
     "HTTP_PORT",
     "EMBEDDING_MODEL",
     "EMBEDDING_DIM",
@@ -44,7 +43,6 @@ def test_defaults_applied():
         OPENAI_API_KEY="sk-test",
     )
     assert settings.EMBEDDER == "openai"
-    assert settings.GRPC_PORT == 50051
     assert settings.HTTP_PORT == 8000
     assert settings.EMBEDDING_MODEL == "text-embedding-3-small"
     assert settings.EMBEDDING_DIM == 1536
@@ -77,14 +75,13 @@ def test_invalid_embedder_rejected():
         )
 
 
-@pytest.mark.parametrize("field", ["GRPC_PORT", "HTTP_PORT"])
 @pytest.mark.parametrize("port", [0, -1, 70000])
-def test_invalid_port_rejected(field, port):
+def test_invalid_port_rejected(port):
     with pytest.raises(ValidationError):
         make_settings(
             DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
             OPENAI_API_KEY="sk-test",
-            **{field: port},
+            HTTP_PORT=port,
         )
 
 

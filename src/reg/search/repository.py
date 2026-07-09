@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reg.db.models import Document
 from reg.db.models import DocumentChunk
+from reg.db.models import DocumentStatus
 from reg.search.types import SearchHit
 
 
@@ -43,7 +44,10 @@ class SearchRepository:
                 DocumentChunk.seq.label("seq"),
             )
             .join(Document, Document.id == DocumentChunk.document_id)
-            .where(Document.user_id == user_id)
+            .where(
+                Document.user_id == user_id,
+                Document.status == DocumentStatus.READY.value,
+            )
             .order_by(distance)
             .limit(top_k)
         )

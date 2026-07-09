@@ -1,7 +1,7 @@
 """End-to-end smoke check for local reg development.
 
 The script starts docker compose with a temporary override, uploads a small
-Markdown document, waits for ingest to become ready, and performs a gRPC Search.
+Markdown document, waits for ingest to become ready, and performs an HTTP search.
 """
 
 from __future__ import annotations
@@ -9,13 +9,11 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import sys
 import tempfile
 import textwrap
 import time
 from pathlib import Path
 
-import grpc
 import httpx
 from alembic import command
 from alembic.config import Config
@@ -27,11 +25,8 @@ DOCUMENT_TEXT = "Port smoke document. The retrieval keyword is copper-pineapple.
 
 
 def main() -> None:
-    contracts_gen = _contracts_gen_path()
-    sys.path.insert(0, str(contracts_gen))
-
     try:
-        _ensure_compose(contracts_gen)
+        _ensure_compose()
         _run_migrations()
         asyncio.run(_roundtrip())
     finally:
@@ -47,15 +42,7 @@ def main() -> None:
         )
 
 
-def _contracts_gen_path() -> Path:
-    for parent in (ROOT, *ROOT.parents):
-        candidate = parent / "contracts" / "gen" / "python"
-        if (candidate / "port" / "reg" / "v1" / "reg_pb2.py").exists():
-            return candidate
-    raise RuntimeError("contracts/gen/python with port.reg.v1 generated code was not found")
-
-
-def _ensure_compose(contracts_gen: Path) -> None:
+def _ensure_compose() -> None:
     embedder = _embedder_mode()
     api_key = os.environ.get("OPENAI_API_KEY", "") if embedder == "openai" else ""
     override = textwrap.dedent(
@@ -71,9 +58,6 @@ def _ensure_compose(contracts_gen: Path) -> None:
               OPENAI_API_KEY: "{api_key}"
             ports: !override
               - "${{REG_SMOKE_HTTP_PORT:-8000}}:8000"
-              - "${{REG_SMOKE_GRPC_PORT:-50051}}:50051"
-            volumes:
-              - {contracts_gen}:/app/contracts-gen:ro
         """
     )
 
@@ -111,15 +95,13 @@ def _run_migrations() -> None:
 
 async def _roundtrip() -> None:
     http_base = os.environ.get("REG_SMOKE_HTTP_BASE", "http://localhost:8000")
-    grpc_target = os.environ.get("REG_SMOKE_GRPC_TARGET", "localhost:50051")
 
     async with httpx.AsyncClient(base_url=http_base, timeout=30.0) as client:
         await _wait_until_ready(client)
         document_id = await _upload(client)
         await _wait_for_document_ready(client, document_id)
-
-    latency_ms, results_count = await _search(grpc_target)
-    print(f"Search latency: {latency_ms:.2f} ms ({results_count} result(s))")
+        latency_ms, results_count = await _search(client)
+        print(f"Search latency: {latency_ms:.2f} ms ({results_count} result(s))")
 
 
 async def _wait_until_ready(client: httpx.AsyncClient) -> None:
@@ -142,7 +124,7 @@ async def _upload(client: httpx.AsyncClient) -> str:
         files={"file": ("smoke.md", DOCUMENT_TEXT.encode(), "text/markdown")},
     )
     response.raise_for_status()
-    document_id = str(response.json()["id"])
+    document_id = str(response.json()["data"]["id"])
     print(f"Uploaded document: {document_id}")
     return document_id
 
@@ -152,7 +134,7 @@ async def _wait_for_document_ready(client: httpx.AsyncClient, document_id: str) 
     while time.monotonic() < deadline:
         response = await client.get(f"/documents/{document_id}", params={"userId": USER_ID})
         response.raise_for_status()
-        document = response.json()
+        document = response.json()["data"]
         status = document["status"]
         if status == "ready":
             print(f"Document ready: {document_id}")
@@ -163,25 +145,22 @@ async def _wait_for_document_ready(client: httpx.AsyncClient, document_id: str) 
     raise RuntimeError(f"document {document_id} did not become ready within 120s")
 
 
-async def _search(grpc_target: str) -> tuple[float, int]:
-    from port.reg.v1 import reg_pb2
-    from port.reg.v1 import reg_pb2_grpc
-
-    async with grpc.aio.insecure_channel(grpc_target) as channel:
-        await asyncio.wait_for(channel.channel_ready(), timeout=30)
-        stub = reg_pb2_grpc.RegServiceStub(channel)
-        request = reg_pb2.SearchRequest(
-            user_id=USER_ID,
-            query="copper pineapple retrieval keyword",
-            top_k=3,
-        )
-        started = time.perf_counter()
-        response = await stub.Search(request, timeout=30)
-        latency_ms = (time.perf_counter() - started) * 1000
-
-    if not response.results:
+async def _search(client: httpx.AsyncClient) -> tuple[float, int]:
+    started = time.perf_counter()
+    response = await client.post(
+        "/search",
+        json={
+            "userId": USER_ID,
+            "query": "copper pineapple retrieval keyword",
+            "topK": 3,
+        },
+    )
+    latency_ms = (time.perf_counter() - started) * 1000
+    response.raise_for_status()
+    results = response.json()["data"]["results"]
+    if not results:
         raise RuntimeError("Search returned no results")
-    return latency_ms, len(response.results)
+    return latency_ms, len(results)
 
 
 def _run(command_line: list[str], *, check: bool = True) -> None:

@@ -1,13 +1,12 @@
 # reg
 
 Python RAG ingest/search service for Port. It exposes internal HTTP document
-management and gRPC `RegService.Search`.
+management and search endpoints.
 
 ## Local Setup
 
 ```bash
 uv sync
-export PYTHONPATH=../contracts/gen/python
 cp .env.example .env
 ```
 
@@ -31,11 +30,9 @@ OPENAI_API_KEY=sk-...
 - `EMBEDDER`: `openai` or `fake`
 - `OPENAI_API_KEY`: required only when `EMBEDDER=openai`
 - `HTTP_PORT`: default `8000`
-- `GRPC_PORT`: default `50051`
 - `EMBEDDING_MODEL`: default `text-embedding-3-small`
 - `EMBEDDING_DIM`: default `1536`
 - `TOP_K_DEFAULT`: default `5`
-- `CONTRACTS_GEN`: optional compose bind path, default `../contracts/gen/python`
 
 ## Checks
 
@@ -47,7 +44,6 @@ uv run pytest
 uv run ruff check .
 ```
 
-`docker-compose.yml` mounts `${CONTRACTS_GEN:-../contracts/gen/python}` at `/app/contracts-gen`.
 `scripts/smoke.py` also selects `EMBEDDER=fake` when `OPENAI_API_KEY` is not set.
 If host port `5432` is already occupied, run the smoke check with alternate
 ports:
@@ -55,9 +51,7 @@ ports:
 ```bash
 REG_SMOKE_POSTGRES_PORT=55435 \
 REG_SMOKE_HTTP_PORT=18082 \
-REG_SMOKE_GRPC_PORT=15054 \
 REG_SMOKE_HTTP_BASE=http://localhost:18082 \
-REG_SMOKE_GRPC_TARGET=localhost:15054 \
 SMOKE_EMBEDDER=fake \
 uv run python scripts/smoke.py
 ```

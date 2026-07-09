@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(..., min_length=1)
     OPENAI_API_KEY: str | None = None
     EMBEDDER: Literal["openai", "fake"] = "openai"
-    GRPC_PORT: int = Field(50051, ge=1, le=65535)
     HTTP_PORT: int = Field(8000, ge=1, le=65535)
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIM: int = 1536
