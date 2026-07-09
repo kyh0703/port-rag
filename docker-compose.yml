@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: reg
+      POSTGRES_PASSWORD: reg
+      POSTGRES_DB: reg
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reg -d reg"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  reg:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env.example
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
+      - "50051:50051"
+    volumes:
+      - ${CONTRACTS_GEN:-../contracts/gen/python}:/app/contracts-gen:ro
+
+volumes:
+  pgdata:
