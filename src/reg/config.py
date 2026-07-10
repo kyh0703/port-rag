@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIM: int = 1536
     TOP_K_DEFAULT: int = 5
+    SENTRY_DSN: str | None = None
 
     @model_validator(mode="after")
     def require_openai_key_for_openai_embedder(self) -> "Settings":

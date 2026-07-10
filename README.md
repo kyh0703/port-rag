@@ -33,6 +33,7 @@ OPENAI_API_KEY=sk-...
 - `EMBEDDING_MODEL`: default `text-embedding-3-small`
 - `EMBEDDING_DIM`: default `1536`
 - `TOP_K_DEFAULT`: default `5`
+- `SENTRY_DSN`: optional Sentry DSN; enables unhandled FastAPI exception reporting
 
 ## Checks
 

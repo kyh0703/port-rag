@@ -6,7 +6,9 @@ heavy provider imports are loaded lazily inside ``serve()``.
 
 import asyncio
 import uvicorn
+import sentry_sdk
 from fastapi import FastAPI
+from sentry_sdk.integrations.fastapi import FastApiIntegration
 
 from reg.config import Settings
 from reg.config import get_settings
@@ -31,6 +33,7 @@ app = create_app()
 async def serve() -> None:
     """Run the internal HTTP server."""
     settings = get_settings()
+    initialize_sentry(settings)
     runtime_app = create_app()
     engine = None
     worker = None
@@ -93,6 +96,28 @@ async def serve() -> None:
             await worker.stop()
         if engine is not None:
             await engine.dispose()
+
+
+def initialize_sentry(settings: Settings) -> None:
+    """Enable Sentry error reporting when a DSN is configured."""
+    if settings.SENTRY_DSN:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            integrations=[FastApiIntegration()],
+            send_default_pii=False,
+            max_request_body_size="never",
+            include_local_variables=False,
+            before_send=scrub_sentry_event,
+        )
+
+
+def scrub_sentry_event(event: dict[str, object], hint: dict[str, object]) -> dict[str, object]:
+    """Remove sensitive HTTP request data before sending an event."""
+    request = event.get("request")
+    if isinstance(request, dict):
+        for key in ("data", "query_string", "headers"):
+            request.pop(key, None)
+    return event
 
 
 def _create_embedder(settings: Settings) -> object:

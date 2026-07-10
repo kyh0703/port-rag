@@ -13,6 +13,7 @@ ENV_VARS = [
     "EMBEDDING_MODEL",
     "EMBEDDING_DIM",
     "TOP_K_DEFAULT",
+    "SENTRY_DSN",
 ]
 
 
@@ -47,6 +48,16 @@ def test_defaults_applied():
     assert settings.EMBEDDING_MODEL == "text-embedding-3-small"
     assert settings.EMBEDDING_DIM == 1536
     assert settings.TOP_K_DEFAULT == 5
+    assert settings.SENTRY_DSN is None
+
+
+def test_sentry_dsn_is_optional():
+    settings = make_settings(
+        DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+        EMBEDDER="fake",
+        SENTRY_DSN="https://public@example.ingest.sentry.io/1",
+    )
+    assert settings.SENTRY_DSN == "https://public@example.ingest.sentry.io/1"
 
 
 def test_embedder_fake_allows_missing_openai_api_key():
