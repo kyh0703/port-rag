@@ -9,11 +9,14 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
 # Install dependencies first for layer caching (docling/torch are heavy).
+# Keep uv's package cache outside image layers.
 COPY pyproject.toml uv.lock .python-version ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
 
 COPY src ./src
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
 # Run as non-root.
 RUN useradd --create-home --uid 1000 rag
