@@ -1,0 +1,33 @@
+# PR 검증용. main 으로 가는 PR 마다 lint/test + 도커 빌드 확인.
+# 이미지 push 는 하지 않는다.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run pytest
+
+      # 이미지가 실제로 빌드되는지만 확인 (push=false).
+      # RAG Dockerfile 은 별도 runner stage 를 두지 않는다.
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false

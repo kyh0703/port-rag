@@ -1,0 +1,47 @@
+# 오래된 :sha-<commit> 이미지만 주기적으로 정리한다.
+# :dev, 버전 태그, untagged 멀티아치 자식 매니페스트는 유지한다.
+name: cleanup-images
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+env:
+  OWNER: kyh0703
+  PACKAGE: port-rag
+  KEEP: "20"
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: delete old sha-* versions
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_CLEANUP_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          gh api --paginate \
+            "/users/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
+            -q '.[] | {id, created: .created_at, tags: (.metadata.container.tags // [])}' \
+            | jq -s '.' > versions.json
+
+          jq -r --argjson keep "${KEEP}" '
+            map(select((.tags | length) > 0 and (.tags | all(startswith("sha-")))))
+            | sort_by(.created) | reverse
+            | .[$keep:]
+            | .[].id
+          ' versions.json > to_delete.txt
+
+          count=$(grep -c . to_delete.txt || true)
+          echo "keeping newest ${KEEP} sha-* (+ dev/version tags); deleting ${count} old sha-* versions"
+
+          while read -r id; do
+            [ -z "$id" ] && continue
+            gh api -X DELETE "/users/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
+            echo "deleted version ${id}"
+          done < to_delete.txt
