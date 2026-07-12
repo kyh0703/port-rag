@@ -6,8 +6,8 @@ from zipfile import ZipFile
 
 import pytest
 
-from reg.ingest.chunker import HybridDoclingChunker
-from reg.ingest.parser import DoclingParser
+from rag.ingest.chunker import HybridDoclingChunker
+from rag.ingest.parser import DoclingParser
 
 
 @pytest.mark.asyncio

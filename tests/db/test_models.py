@@ -4,8 +4,8 @@ import sqlalchemy as sa
 from pgvector.sqlalchemy import VECTOR
 from sqlalchemy.dialects.postgresql import JSONB
 
-from reg.db.models import DocumentStatus
-from reg.db.models import metadata
+from rag.db.models import DocumentStatus
+from rag.db.models import metadata
 
 
 def test_document_status_values_are_fixed() -> None:

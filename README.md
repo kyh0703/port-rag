@@ -1,4 +1,4 @@
-# reg
+# rag
 
 Python RAG ingest/search service for Port. It exposes internal HTTP document
 management and search endpoints.

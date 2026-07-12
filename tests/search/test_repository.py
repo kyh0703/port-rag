@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.dialects import postgresql
 
-from reg.search.repository import SearchRepository
+from rag.search.repository import SearchRepository
 
 
 class FakeResult:

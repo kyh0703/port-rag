@@ -8,9 +8,9 @@ import sys
 from unittest.mock import patch
 
 import pytest
-from reg.config import Settings
-from reg.main import initialize_sentry
-from reg.main import scrub_sentry_event
+from rag.config import Settings
+from rag.main import initialize_sentry
+from rag.main import scrub_sentry_event
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
 INTEGRATION_SCRIPT = """\
@@ -22,8 +22,8 @@ from fastapi.testclient import TestClient
 from sentry_sdk.envelope import Envelope
 from sentry_sdk.transport import Transport
 
-import reg.main
-from reg.config import Settings
+import rag.main
+from rag.config import Settings
 
 
 class MemoryTransport(Transport):
@@ -45,15 +45,15 @@ def init_with_memory_transport(**kwargs):
     return real_init(transport=transport, **kwargs)
 
 
-reg.main.sentry_sdk.init = init_with_memory_transport
+rag.main.sentry_sdk.init = init_with_memory_transport
 settings = Settings(
     _env_file=None,
     DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
     EMBEDDER="fake",
     SENTRY_DSN="https://public@example.ingest.sentry.io/1",
 )
-reg.main.initialize_sentry(settings)
-app = reg.main.create_app()
+rag.main.initialize_sentry(settings)
+app = rag.main.create_app()
 
 
 @app.post("/crash")
@@ -112,7 +112,7 @@ def make_settings(*, sentry_dsn: str | None = None) -> Settings:
 
 
 def test_initialize_sentry_with_configured_dsn():
-    with patch("reg.main.sentry_sdk.init") as init:
+    with patch("rag.main.sentry_sdk.init") as init:
         initialize_sentry(make_settings(sentry_dsn="https://public@example.ingest.sentry.io/1"))
 
     init.assert_called_once()
@@ -126,7 +126,7 @@ def test_initialize_sentry_with_configured_dsn():
 
 @pytest.mark.parametrize("sentry_dsn", [None, ""])
 def test_initialize_sentry_skips_unconfigured_dsn(sentry_dsn: str | None):
-    with patch("reg.main.sentry_sdk.init") as init:
+    with patch("rag.main.sentry_sdk.init") as init:
         initialize_sentry(make_settings(sentry_dsn=sentry_dsn))
 
     init.assert_not_called()

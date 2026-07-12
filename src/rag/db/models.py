@@ -15,7 +15,7 @@ from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 
-from reg.db.base import Base
+from rag.db.base import Base
 
 metadata = Base.metadata
 

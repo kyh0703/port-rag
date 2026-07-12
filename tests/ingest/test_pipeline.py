@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from reg.db.models import DocumentStatus
-from reg.ingest import IngestChunk
-from reg.ingest import IngestJob
-from reg.ingest import IngestPipeline
-from reg.ingest import ParsedDocument
-from reg.ingest import StaticFakeEmbedder
+from rag.db.models import DocumentStatus
+from rag.ingest import IngestChunk
+from rag.ingest import IngestJob
+from rag.ingest import IngestPipeline
+from rag.ingest import ParsedDocument
+from rag.ingest import StaticFakeEmbedder
 
 
 @dataclass

@@ -10,10 +10,10 @@ from typing import Protocol
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from reg.db.models import Document
-from reg.db.models import DocumentChunk
-from reg.db.models import DocumentStatus
-from reg.search.types import SearchHit
+from rag.db.models import Document
+from rag.db.models import DocumentChunk
+from rag.db.models import DocumentStatus
+from rag.search.types import SearchHit
 
 
 class SessionFactory(Protocol):

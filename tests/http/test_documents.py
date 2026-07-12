@@ -8,10 +8,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from reg.db.models import DocumentStatus
-from reg.http.documents import DocumentRecord
-from reg.http.documents import create_documents_router
-from reg.http.responses import register_exception_handlers
+from rag.db.models import DocumentStatus
+from rag.http.documents import DocumentRecord
+from rag.http.documents import create_documents_router
+from rag.http.responses import register_exception_handlers
 
 
 NOW = datetime(2026, 7, 9, 12, 0, tzinfo=UTC)

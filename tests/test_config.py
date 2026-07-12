@@ -1,9 +1,9 @@
-"""Tests for reg.config.Settings."""
+"""Tests for rag.config.Settings."""
 
 import pytest
 from pydantic import ValidationError
 
-from reg.config import Settings, get_settings
+from rag.config import Settings, get_settings
 
 ENV_VARS = [
     "DATABASE_URL",

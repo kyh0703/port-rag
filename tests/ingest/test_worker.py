@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from reg.ingest.types import IngestJob
-from reg.ingest.worker import IngestWorker
+from rag.ingest.types import IngestJob
+from rag.ingest.worker import IngestWorker
 
 
 class RecordingPipeline:

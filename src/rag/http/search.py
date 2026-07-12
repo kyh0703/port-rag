@@ -10,10 +10,10 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
-from reg.http.responses import ApiResponse
-from reg.http.responses import ok
-from reg.search.service import InvalidSearchRequest
-from reg.search.types import SearchHit
+from rag.http.responses import ApiResponse
+from rag.http.responses import ok
+from rag.search.service import InvalidSearchRequest
+from rag.search.types import SearchHit
 
 
 class SearchBoundary(Protocol):

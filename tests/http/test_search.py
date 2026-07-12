@@ -3,10 +3,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from reg.http.responses import register_exception_handlers
-from reg.http.search import create_search_router
-from reg.search.service import InvalidSearchRequest
-from reg.search.types import SearchHit
+from rag.http.responses import register_exception_handlers
+from rag.http.search import create_search_router
+from rag.search.service import InvalidSearchRequest
+from rag.search.types import SearchHit
 
 
 class FakeSearchService:

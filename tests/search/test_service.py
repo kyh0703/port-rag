@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reg.ingest.embedder import StaticFakeEmbedder
-from reg.search.service import SearchService
-from reg.search.types import SearchHit
+from rag.ingest.embedder import StaticFakeEmbedder
+from rag.search.service import SearchService
+from rag.search.types import SearchHit
 
 
 class FakeEmbedder:

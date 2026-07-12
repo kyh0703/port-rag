@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from reg.ingest.types import DocumentChunker
-from reg.ingest.types import DocumentParser
-from reg.ingest.types import IngestJob
-from reg.ingest.types import IngestStore
-from reg.ingest.types import TextEmbedder
+from rag.ingest.types import DocumentChunker
+from rag.ingest.types import DocumentParser
+from rag.ingest.types import IngestJob
+from rag.ingest.types import IngestStore
+from rag.ingest.types import TextEmbedder
 
 
 class IngestPipeline:

@@ -9,8 +9,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from reg.db.base import metadata
-import reg.db.models  # noqa: F401
+from rag.db.base import metadata
+import rag.db.models  # noqa: F401
 
 
 config = context.config

@@ -7,8 +7,8 @@ from typing import Any
 
 from docling.chunking import HybridChunker
 
-from reg.ingest.types import IngestChunk
-from reg.ingest.types import ParsedDocument
+from rag.ingest.types import IngestChunk
+from rag.ingest.types import ParsedDocument
 
 
 class HybridDoclingChunker:

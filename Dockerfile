@@ -21,4 +21,4 @@ USER reg
 
 EXPOSE 8000
 
-CMD ["uv", "run", "--no-sync", "python", "-m", "reg.main"]
+CMD ["uv", "run", "--no-sync", "python", "-m", "rag.main"]

@@ -1,4 +1,4 @@
-"""Runtime settings for reg."""
+"""Runtime settings for rag."""
 
 from functools import lru_cache
 from typing import Literal

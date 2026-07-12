@@ -1,4 +1,4 @@
-"""reg entrypoint for the internal FastAPI HTTP server.
+"""rag entrypoint for the internal FastAPI HTTP server.
 
 Importing this module must not require any provider credentials; settings and
 heavy provider imports are loaded lazily inside ``serve()``.
@@ -10,14 +10,14 @@ import sentry_sdk
 from fastapi import FastAPI
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
-from reg.config import Settings
-from reg.config import get_settings
-from reg.http.responses import ok
-from reg.http.responses import register_exception_handlers
+from rag.config import Settings
+from rag.config import get_settings
+from rag.http.responses import ok
+from rag.http.responses import register_exception_handlers
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="reg")
+    app = FastAPI(title="rag")
     register_exception_handlers(app)
 
     @app.get("/healthz")
@@ -38,18 +38,18 @@ async def serve() -> None:
     engine = None
     worker = None
 
-    from reg.db.session import create_engine
-    from reg.db.session import create_session_factory
-    from reg.http.documents import SqlAlchemyDocumentRepository
-    from reg.http.documents import create_documents_router
-    from reg.http.search import create_search_router
-    from reg.ingest.chunker import HybridDoclingChunker
-    from reg.ingest.parser import DoclingParser
-    from reg.ingest.pipeline import IngestPipeline
-    from reg.ingest.store import SqlAlchemyIngestStore
-    from reg.ingest.worker import IngestWorker
-    from reg.search.repository import SearchRepository
-    from reg.search.service import SearchService
+    from rag.db.session import create_engine
+    from rag.db.session import create_session_factory
+    from rag.http.documents import SqlAlchemyDocumentRepository
+    from rag.http.documents import create_documents_router
+    from rag.http.search import create_search_router
+    from rag.ingest.chunker import HybridDoclingChunker
+    from rag.ingest.parser import DoclingParser
+    from rag.ingest.pipeline import IngestPipeline
+    from rag.ingest.store import SqlAlchemyIngestStore
+    from rag.ingest.worker import IngestWorker
+    from rag.search.repository import SearchRepository
+    from rag.search.service import SearchService
 
     engine = create_engine(settings.DATABASE_URL)
     session_factory = create_session_factory(engine)
@@ -122,11 +122,11 @@ def scrub_sentry_event(event: dict[str, object], hint: dict[str, object]) -> dic
 
 def _create_embedder(settings: Settings) -> object:
     if settings.EMBEDDER == "fake":
-        from reg.ingest.embedder import StaticFakeEmbedder
+        from rag.ingest.embedder import StaticFakeEmbedder
 
         return StaticFakeEmbedder(dimensions=settings.EMBEDDING_DIM)
 
-    from reg.ingest.embedder import OpenAIEmbedder
+    from rag.ingest.embedder import OpenAIEmbedder
 
     return OpenAIEmbedder(
         api_key=settings.OPENAI_API_KEY or "",

@@ -9,7 +9,7 @@ from docling.document_converter import DocumentConverter
 from docling_core.types.doc import DocItemLabel
 from docling_core.types.doc import DoclingDocument
 
-from reg.ingest.types import ParsedDocument
+from rag.ingest.types import ParsedDocument
 
 
 class DoclingParser:

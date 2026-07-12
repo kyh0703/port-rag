@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from reg.ingest.pipeline import IngestPipeline
-from reg.ingest.types import IngestJob
+from rag.ingest.pipeline import IngestPipeline
+from rag.ingest.types import IngestJob
 
 logger = logging.getLogger(__name__)
 

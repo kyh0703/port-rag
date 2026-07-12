@@ -8,10 +8,10 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from reg.db.models import Document
-from reg.db.models import DocumentChunk
-from reg.db.models import DocumentStatus
-from reg.ingest.types import IngestChunk
+from rag.db.models import Document
+from rag.db.models import DocumentChunk
+from rag.db.models import DocumentStatus
+from rag.ingest.types import IngestChunk
 
 
 class SqlAlchemyIngestStore:

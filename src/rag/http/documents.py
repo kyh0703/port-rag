@@ -24,11 +24,11 @@ from pydantic import ConfigDict
 from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from reg.db.models import Document
-from reg.db.models import DocumentStatus
-from reg.http.responses import ApiResponse
-from reg.http.responses import ok
-from reg.ingest.types import IngestJob
+from rag.db.models import Document
+from rag.db.models import DocumentStatus
+from rag.http.responses import ApiResponse
+from rag.http.responses import ok
+from rag.ingest.types import IngestJob
 
 
 class SessionFactory(Protocol):
