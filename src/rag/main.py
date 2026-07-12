@@ -5,20 +5,43 @@ heavy provider imports are loaded lazily inside ``serve()``.
 """
 
 import asyncio
+from time import perf_counter
+
 import uvicorn
 import sentry_sdk
 from fastapi import FastAPI
+from prometheus_client import make_asgi_app
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
 from rag.config import Settings
 from rag.config import get_settings
+from rag.metrics import Metrics
 from rag.http.responses import ok
 from rag.http.responses import register_exception_handlers
 
 
-def create_app() -> FastAPI:
+def create_app(*, metrics_enabled: bool = True) -> FastAPI:
     app = FastAPI(title="rag")
     register_exception_handlers(app)
+    metrics = Metrics()
+    app.state.metrics = metrics
+
+    @app.middleware("http")
+    async def observe_http_requests(request, call_next):
+        started_at = perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            metrics.observe_http(route=request.url.path, status=500, started_at=started_at)
+            raise
+
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", request.url.path)
+        metrics.observe_http(route=route_path, status=response.status_code, started_at=started_at)
+        return response
+
+    if metrics_enabled:
+        app.mount("/metrics", make_asgi_app(registry=metrics.registry))
 
     @app.get("/healthz")
     async def healthz():
@@ -34,7 +57,7 @@ async def serve() -> None:
     """Run the internal HTTP server."""
     settings = get_settings()
     initialize_sentry(settings)
-    runtime_app = create_app()
+    runtime_app = create_app(metrics_enabled=settings.METRICS_ENABLED)
     engine = None
     worker = None
 
@@ -51,9 +74,10 @@ async def serve() -> None:
     from rag.search.repository import SearchRepository
     from rag.search.service import SearchService
 
-    engine = create_engine(settings.DATABASE_URL)
+    metrics = runtime_app.state.metrics
+    engine = create_engine(settings.DATABASE_URL, metrics=metrics)
     session_factory = create_session_factory(engine)
-    embedder = _create_embedder(settings)
+    embedder = _create_embedder(settings, metrics=metrics)
 
     worker = IngestWorker(
         IngestPipeline(
@@ -61,7 +85,8 @@ async def serve() -> None:
             chunker=HybridDoclingChunker(),
             embedder=embedder,
             store=SqlAlchemyIngestStore(session_factory),
-        )
+        ),
+        metrics=metrics,
     )
     worker.start()
 
@@ -120,7 +145,7 @@ def scrub_sentry_event(event: dict[str, object], hint: dict[str, object]) -> dic
     return event
 
 
-def _create_embedder(settings: Settings) -> object:
+def _create_embedder(settings: Settings, *, metrics: Metrics) -> object:
     if settings.EMBEDDER == "fake":
         from rag.ingest.embedder import StaticFakeEmbedder
 
@@ -131,6 +156,7 @@ def _create_embedder(settings: Settings) -> object:
     return OpenAIEmbedder(
         api_key=settings.OPENAI_API_KEY or "",
         model=settings.EMBEDDING_MODEL,
+        metrics=metrics,
     )
 
 

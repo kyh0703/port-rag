@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 
 from openai import AsyncOpenAI
+
+from rag.metrics import Metrics
 
 
 class StaticFakeEmbedder:
@@ -34,22 +37,34 @@ class OpenAIEmbedder:
         max_attempts: int = 3,
         initial_backoff_seconds: float = 0.5,
         client: AsyncOpenAI | None = None,
+        metrics: Metrics | None = None,
     ) -> None:
         self._client = client or AsyncOpenAI(api_key=api_key, max_retries=0)
         self._model = model
         self._batch_size = batch_size
         self._max_attempts = max_attempts
         self._initial_backoff_seconds = initial_backoff_seconds
+        self._metrics = metrics
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        embeddings: list[list[float]] = []
-        for start in range(0, len(texts), self._batch_size):
-            batch = texts[start : start + self._batch_size]
-            embeddings.extend(await self._embed_batch_with_retry(batch))
-        return embeddings
+        return await self._embed(texts, operation="ingest")
 
     async def embed_query(self, text: str) -> list[float]:
-        return (await self.embed_texts([text]))[0]
+        return (await self._embed([text], operation="search"))[0]
+
+    async def _embed(self, texts: list[str], *, operation: str) -> list[list[float]]:
+        started_at = perf_counter()
+        embeddings: list[list[float]] = []
+        try:
+            for start in range(0, len(texts), self._batch_size):
+                batch = texts[start : start + self._batch_size]
+                embeddings.extend(await self._embed_batch_with_retry(batch))
+            return embeddings
+        finally:
+            if self._metrics is not None:
+                self._metrics.embedding_duration.labels(operation=operation).observe(
+                    perf_counter() - started_at
+                )
 
     async def _embed_batch_with_retry(self, texts: list[str]) -> list[list[float]]:
         delay = self._initial_backoff_seconds

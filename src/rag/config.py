@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     EMBEDDER: Literal["openai", "fake"] = "openai"
     HTTP_PORT: int = Field(8000, ge=1, le=65535)
+    METRICS_ENABLED: bool = True
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIM: int = 1536
     TOP_K_DEFAULT: int = 5
