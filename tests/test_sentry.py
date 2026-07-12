@@ -48,7 +48,7 @@ def init_with_memory_transport(**kwargs):
 rag.main.sentry_sdk.init = init_with_memory_transport
 settings = Settings(
     _env_file=None,
-    DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+    DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
     EMBEDDER="fake",
     SENTRY_DSN="https://public@example.ingest.sentry.io/1",
 )
@@ -105,7 +105,7 @@ print(
 def make_settings(*, sentry_dsn: str | None = None) -> Settings:
     return Settings(
         _env_file=None,
-        DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
         EMBEDDER="fake",
         SENTRY_DSN=sentry_dsn,
     )

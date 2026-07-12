@@ -26,7 +26,7 @@ OPENAI_API_KEY=sk-...
 ## Environment
 
 - `DATABASE_URL`: async SQLAlchemy URL, for example
-  `postgresql+asyncpg://reg:reg@localhost:5432/reg`
+  `postgresql+asyncpg://port:port@localhost:5432/port`
 - `EMBEDDER`: `openai` or `fake`
 - `OPENAI_API_KEY`: required only when `EMBEDDER=openai`
 - `HTTP_PORT`: default `8000`

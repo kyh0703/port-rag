@@ -53,7 +53,7 @@ def _ensure_compose() -> None:
               - "${{REG_SMOKE_POSTGRES_PORT:-5432}}:5432"
           reg:
             environment:
-              DATABASE_URL: postgresql+asyncpg://reg:reg@postgres:5432/reg
+              DATABASE_URL: postgresql+asyncpg://port:port@postgres:5432/port
               EMBEDDER: {embedder}
               OPENAI_API_KEY: "{api_key}"
             ports: !override
@@ -86,7 +86,7 @@ def _run_migrations() -> None:
     postgres_port = os.environ.get("REG_SMOKE_POSTGRES_PORT", "5432")
     database_url = os.environ.get(
         "REG_SMOKE_DATABASE_URL",
-        f"postgresql+asyncpg://reg:reg@localhost:{postgres_port}/reg",
+        f"postgresql+asyncpg://port:port@localhost:{postgres_port}/port",
     )
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)

@@ -4,11 +4,11 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: reg
-      POSTGRES_PASSWORD: reg
-      POSTGRES_DB: reg
+      POSTGRES_USER: port
+      POSTGRES_PASSWORD: port
+      POSTGRES_DB: port
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U reg -d reg"]
+      test: ["CMD-SHELL", "pg_isready -U port -d port"]
       interval: 5s
       timeout: 5s
       retries: 10

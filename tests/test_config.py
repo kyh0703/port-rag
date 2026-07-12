@@ -40,7 +40,7 @@ def test_missing_database_url_raises():
 
 def test_defaults_applied():
     settings = make_settings(
-        DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
         OPENAI_API_KEY="sk-test",
     )
     assert settings.EMBEDDER == "openai"
@@ -53,7 +53,7 @@ def test_defaults_applied():
 
 def test_sentry_dsn_is_optional():
     settings = make_settings(
-        DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
         EMBEDDER="fake",
         SENTRY_DSN="https://public@example.ingest.sentry.io/1",
     )
@@ -62,7 +62,7 @@ def test_sentry_dsn_is_optional():
 
 def test_embedder_fake_allows_missing_openai_api_key():
     settings = make_settings(
-        DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
         EMBEDDER="fake",
     )
     assert settings.EMBEDDER == "fake"
@@ -72,7 +72,7 @@ def test_embedder_fake_allows_missing_openai_api_key():
 def test_embedder_openai_requires_openai_api_key():
     with pytest.raises(ValidationError) as exc_info:
         make_settings(
-            DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+            DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
         )
     assert "OPENAI_API_KEY" in str(exc_info.value)
 
@@ -80,7 +80,7 @@ def test_embedder_openai_requires_openai_api_key():
 def test_invalid_embedder_rejected():
     with pytest.raises(ValidationError):
         make_settings(
-            DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+            DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
             OPENAI_API_KEY="sk-test",
             EMBEDDER="bogus",
         )
@@ -90,14 +90,14 @@ def test_invalid_embedder_rejected():
 def test_invalid_port_rejected(port):
     with pytest.raises(ValidationError):
         make_settings(
-            DATABASE_URL="postgresql+asyncpg://reg:reg@localhost:5432/reg",
+            DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
             OPENAI_API_KEY="sk-test",
             HTTP_PORT=port,
         )
 
 
 def test_get_settings_is_cached(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://reg:reg@localhost:5432/reg")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://port:port@localhost:5432/port")
     monkeypatch.setenv("EMBEDDER", "fake")
     first = get_settings()
     second = get_settings()
