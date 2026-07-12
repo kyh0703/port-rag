@@ -50,9 +50,9 @@ If host port `5432` is already occupied, run the smoke check with alternate
 ports:
 
 ```bash
-REG_SMOKE_POSTGRES_PORT=55435 \
-REG_SMOKE_HTTP_PORT=18082 \
-REG_SMOKE_HTTP_BASE=http://localhost:18082 \
+RAG_SMOKE_POSTGRES_PORT=55435 \
+RAG_SMOKE_HTTP_PORT=18082 \
+RAG_SMOKE_HTTP_BASE=http://localhost:18082 \
 SMOKE_EMBEDDER=fake \
 uv run python scripts/smoke.py
 ```

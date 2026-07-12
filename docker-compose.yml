@@ -15,7 +15,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  reg:
+  rag:
     build: .
     depends_on:
       postgres:

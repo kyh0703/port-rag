@@ -85,7 +85,7 @@ class UploadStorage(Protocol):
 
 class LocalUploadStorage:
     def __init__(self, upload_dir: Path | None = None) -> None:
-        self._upload_dir = upload_dir or Path(tempfile.mkdtemp(prefix="reg-uploads-"))
+        self._upload_dir = upload_dir or Path(tempfile.mkdtemp(prefix="rag-uploads-"))
         self._upload_dir.mkdir(parents=True, exist_ok=True)
 
     async def save(self, upload: UploadFile) -> Path:

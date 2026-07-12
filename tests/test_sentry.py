@@ -137,7 +137,7 @@ def test_scrub_sentry_event_removes_request_pii():
         "message": "ingest failed",
         "extra": {"document_id": "doc-123"},
         "request": {
-            "url": "https://reg.example/documents",
+            "url": "https://rag.example/documents",
             "data": {"content": "secret document"},
             "query_string": "api_key=secret",
             "headers": {"authorization": "Bearer secret"},
@@ -149,7 +149,7 @@ def test_scrub_sentry_event_removes_request_pii():
     assert result == {
         "message": "ingest failed",
         "extra": {"document_id": "doc-123"},
-        "request": {"url": "https://reg.example/documents"},
+        "request": {"url": "https://rag.example/documents"},
     }
 
 

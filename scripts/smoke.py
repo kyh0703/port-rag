@@ -1,4 +1,4 @@
-"""End-to-end smoke check for local reg development.
+"""End-to-end smoke check for local rag development.
 
 The script starts docker compose with a temporary override, uploads a small
 Markdown document, waits for ingest to become ready, and performs an HTTP search.
@@ -50,14 +50,14 @@ def _ensure_compose() -> None:
         services:
           postgres:
             ports: !override
-              - "${{REG_SMOKE_POSTGRES_PORT:-5432}}:5432"
-          reg:
+              - "${{RAG_SMOKE_POSTGRES_PORT:-5432}}:5432"
+          rag:
             environment:
               DATABASE_URL: postgresql+asyncpg://port:port@postgres:5432/port
               EMBEDDER: {embedder}
               OPENAI_API_KEY: "{api_key}"
             ports: !override
-              - "${{REG_SMOKE_HTTP_PORT:-8000}}:8000"
+              - "${{RAG_SMOKE_HTTP_PORT:-8000}}:8000"
         """
     )
 
@@ -83,9 +83,9 @@ def _embedder_mode() -> str:
 
 
 def _run_migrations() -> None:
-    postgres_port = os.environ.get("REG_SMOKE_POSTGRES_PORT", "5432")
+    postgres_port = os.environ.get("RAG_SMOKE_POSTGRES_PORT", "5432")
     database_url = os.environ.get(
-        "REG_SMOKE_DATABASE_URL",
+        "RAG_SMOKE_DATABASE_URL",
         f"postgresql+asyncpg://port:port@localhost:{postgres_port}/port",
     )
     config = Config(str(ROOT / "alembic.ini"))
@@ -94,7 +94,7 @@ def _run_migrations() -> None:
 
 
 async def _roundtrip() -> None:
-    http_base = os.environ.get("REG_SMOKE_HTTP_BASE", "http://localhost:8000")
+    http_base = os.environ.get("RAG_SMOKE_HTTP_BASE", "http://localhost:8000")
 
     async with httpx.AsyncClient(base_url=http_base, timeout=30.0) as client:
         await _wait_until_ready(client)

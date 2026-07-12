@@ -16,8 +16,8 @@ COPY src ./src
 RUN uv sync --frozen --no-dev
 
 # Run as non-root.
-RUN useradd --create-home --uid 1000 reg
-USER reg
+RUN useradd --create-home --uid 1000 rag
+USER rag
 
 EXPOSE 8000
 
