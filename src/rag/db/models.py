@@ -41,7 +41,7 @@ class Document(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    user_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
     mime: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(

@@ -44,7 +44,7 @@ def test_search_returns_api_response_envelope() -> None:
 
     response = client.post(
         "/search",
-        json={"userId": "user-a", "query": "alpha", "topK": 3},
+        json={"userId": "0197e50a-1234-7abc-8def-0123456789ab", "query": "alpha", "topK": 3},
     )
 
     assert response.status_code == 200
@@ -65,7 +65,7 @@ def test_search_returns_api_response_envelope() -> None:
             ]
         },
     }
-    assert service.calls == [("user-a", "alpha", 3)]
+    assert service.calls == [("0197e50a-1234-7abc-8def-0123456789ab", "alpha", 3)]
 
 
 def test_search_invalid_request_returns_api_error_envelope() -> None:
@@ -75,7 +75,7 @@ def test_search_invalid_request_returns_api_error_envelope() -> None:
 
     response = client.post(
         "/search",
-        json={"userId": "user-a", "query": "alpha", "topK": 3},
+        json={"userId": "0197e50a-1234-7abc-8def-0123456789ab", "query": "alpha", "topK": 3},
     )
 
     assert response.status_code == 422
@@ -91,7 +91,7 @@ def test_search_validation_error_returns_api_error_envelope() -> None:
     service = FakeSearchService()
     client = build_client(service)
 
-    response = client.post("/search", json={"userId": "user-a"})
+    response = client.post("/search", json={"userId": "0197e50a-1234-7abc-8def-0123456789ab"})
 
     assert response.status_code == 422
     body = response.json()
@@ -111,7 +111,7 @@ def test_search_unhandled_error_returns_api_error_envelope() -> None:
 
     response = client.post(
         "/search",
-        json={"userId": "user-a", "query": "alpha", "topK": 3},
+        json={"userId": "0197e50a-1234-7abc-8def-0123456789ab", "query": "alpha", "topK": 3},
     )
 
     assert response.status_code == 500

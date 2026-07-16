@@ -45,7 +45,7 @@ async def test_repository_query_is_scoped_by_user_id() -> None:
     session_factory = FakeSessionFactory()
     repository = SearchRepository(session_factory)
 
-    await repository.search(user_id="user-a", embedding=[0.1, 0.2, 0.3], top_k=7)
+    await repository.search(user_id="0197e50a-1234-7abc-8def-0123456789ab", embedding=[0.1, 0.2, 0.3], top_k=7)
 
     assert session_factory.session.statement is not None
     compiled = str(session_factory.session.statement.compile(dialect=postgresql.dialect()))

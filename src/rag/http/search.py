@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Protocol
 
 from fastapi import APIRouter
@@ -24,7 +25,7 @@ class SearchBoundary(Protocol):
 class SearchRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    user_id: str = Field(alias="userId", min_length=1)
+    user_id: uuid.UUID = Field(alias="userId")
     query: str = Field(min_length=1)
     top_k: int = Field(0, alias="topK", ge=0)
 
@@ -56,7 +57,7 @@ def create_search_router(*, service: SearchBoundary) -> APIRouter:
     async def search_documents(request: SearchRequest) -> ApiResponse[SearchResponse]:
         try:
             hits = await service.search(
-                user_id=request.user_id,
+                user_id=str(request.user_id),
                 query=request.query,
                 top_k=request.top_k,
             )

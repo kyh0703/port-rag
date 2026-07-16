@@ -110,7 +110,7 @@ class SqlAlchemyDocumentRepository:
     ) -> DocumentRecord:
         async with self._session_factory() as session:
             document = Document(
-                user_id=user_id,
+                user_id=uuid.UUID(user_id),
                 name=name,
                 mime=mime,
                 status=DocumentStatus.PROCESSING.value,
@@ -124,7 +124,7 @@ class SqlAlchemyDocumentRepository:
     async def list_documents(self, *, user_id: str) -> list[DocumentRecord]:
         statement = (
             sa.select(Document)
-            .where(Document.user_id == user_id)
+            .where(Document.user_id == uuid.UUID(user_id))
             .order_by(Document.created_at.desc(), Document.id)
         )
         async with self._session_factory() as session:
@@ -139,7 +139,7 @@ class SqlAlchemyDocumentRepository:
     ) -> DocumentRecord | None:
         statement = sa.select(Document).where(
             Document.id == document_id,
-            Document.user_id == user_id,
+            Document.user_id == uuid.UUID(user_id),
         )
         async with self._session_factory() as session:
             document = await session.scalar(statement)
@@ -150,7 +150,7 @@ class SqlAlchemyDocumentRepository:
     async def delete_document(self, *, document_id: uuid.UUID, user_id: str) -> bool:
         statement = sa.delete(Document).where(
             Document.id == document_id,
-            Document.user_id == user_id,
+            Document.user_id == uuid.UUID(user_id),
         )
         async with self._session_factory() as session:
             result = await session.execute(statement)
@@ -171,8 +171,8 @@ class DocumentResponse(BaseModel):
     updated_at: datetime = Field(alias="updatedAt")
 
 
-UserIdForm = Annotated[str, Form(alias="userId", min_length=1)]
-UserIdQuery = Annotated[str, Query(alias="userId", min_length=1)]
+UserIdForm = Annotated[uuid.UUID, Form(alias="userId")]
+UserIdQuery = Annotated[uuid.UUID, Query(alias="userId")]
 DocumentUpload = Annotated[UploadFile, File()]
 
 
@@ -195,7 +195,7 @@ def create_documents_router(
         user_id: UserIdForm,
         file: DocumentUpload,
     ) -> ApiResponse[DocumentResponse]:
-        normalized_user_id = _normalize_user_id(user_id)
+        normalized_user_id = str(user_id)
         path = await upload_storage.save(file)
         document: DocumentRecord | None = None
         try:
@@ -221,7 +221,7 @@ def create_documents_router(
         response_model_exclude={"error"},
     )
     async def list_documents(user_id: UserIdQuery) -> ApiResponse[list[DocumentResponse]]:
-        documents = await repository.list_documents(user_id=_normalize_user_id(user_id))
+        documents = await repository.list_documents(user_id=str(user_id))
         return ok([_to_response(document) for document in documents])
 
     @router.get(
@@ -235,7 +235,7 @@ def create_documents_router(
     ) -> ApiResponse[DocumentResponse]:
         document = await repository.get_document(
             document_id=document_id,
-            user_id=_normalize_user_id(user_id),
+            user_id=str(user_id),
         )
         if document is None:
             raise HTTPException(status_code=404, detail="document not found")
@@ -249,7 +249,7 @@ def create_documents_router(
     async def delete_document(document_id: uuid.UUID, user_id: UserIdQuery) -> ApiResponse[None]:
         deleted = await repository.delete_document(
             document_id=document_id,
-            user_id=_normalize_user_id(user_id),
+            user_id=str(user_id),
         )
         if not deleted:
             raise HTTPException(status_code=404, detail="document not found")
@@ -261,7 +261,7 @@ def create_documents_router(
 def _to_record(document: Document) -> DocumentRecord:
     return DocumentRecord(
         id=document.id,
-        user_id=document.user_id,
+        user_id=str(document.user_id),
         name=document.name,
         mime=document.mime,
         status=_status_value(document.status),
@@ -282,13 +282,6 @@ def _to_response(document: DocumentRecord) -> DocumentResponse:
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
-
-
-def _normalize_user_id(user_id: str) -> str:
-    normalized = user_id.strip()
-    if not normalized:
-        raise HTTPException(status_code=422, detail="userId is required")
-    return normalized
 
 
 def _status_value(status: DocumentStatus | str) -> str:

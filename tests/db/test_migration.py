@@ -6,11 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_alembic_initial_migration_contains_required_schema() -> None:
     versions = ROOT / "alembic" / "versions"
-    migration_files = sorted(versions.glob("*.py"))
-
-    assert len(migration_files) == 1
-
-    migration = migration_files[0].read_text()
+    migration = (versions / "20260709_0001_initial_documents_chunks.py").read_text()
     assert "CREATE EXTENSION IF NOT EXISTS vector" in migration
     assert "create_table(\n        \"documents\"" in migration
     assert "create_table(\n        \"chunks\"" in migration

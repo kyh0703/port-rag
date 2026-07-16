@@ -32,7 +32,7 @@ async def test_search_is_scoped_to_requested_user() -> None:
     repository = InMemoryRepository(
         [
             ScopedRow(
-                user_id="user-a",
+                user_id="0197e50a-1234-7abc-8def-0123456789ab",
                 hit=SearchHit(
                     chunk_id="chunk-a",
                     document_id="doc-a",
@@ -44,7 +44,7 @@ async def test_search_is_scoped_to_requested_user() -> None:
                 ),
             ),
             ScopedRow(
-                user_id="user-b",
+                user_id="0197e50a-1234-7abc-8def-0123456789ac",
                 hit=SearchHit(
                     chunk_id="chunk-b",
                     document_id="doc-b",
@@ -59,17 +59,17 @@ async def test_search_is_scoped_to_requested_user() -> None:
     )
     service = SearchService(embedder=FakeEmbedder(), repository=repository, default_top_k=5)
 
-    results = await service.search(user_id="user-a", query="alpha", top_k=10)
+    results = await service.search(user_id="0197e50a-1234-7abc-8def-0123456789ab", query="alpha", top_k=10)
 
     assert [result.chunk_id for result in results] == ["chunk-a"]
-    assert repository.calls == [("user-a", [5.0, 0.0, 1.0], 10)]
+    assert repository.calls == [("0197e50a-1234-7abc-8def-0123456789ab", [5.0, 0.0, 1.0], 10)]
 
 
 async def test_top_k_zero_uses_default() -> None:
     repository = InMemoryRepository(
         [
             ScopedRow(
-                user_id="user-a",
+                user_id="0197e50a-1234-7abc-8def-0123456789ab",
                 hit=SearchHit(
                     chunk_id=f"chunk-{index}",
                     document_id="doc-a",
@@ -85,10 +85,10 @@ async def test_top_k_zero_uses_default() -> None:
     )
     service = SearchService(embedder=FakeEmbedder(), repository=repository, default_top_k=2)
 
-    results = await service.search(user_id="user-a", query="alpha", top_k=0)
+    results = await service.search(user_id="0197e50a-1234-7abc-8def-0123456789ab", query="alpha", top_k=0)
 
     assert [result.chunk_id for result in results] == ["chunk-0", "chunk-1"]
-    assert repository.calls == [("user-a", [5.0, 0.0, 1.0], 2)]
+    assert repository.calls == [("0197e50a-1234-7abc-8def-0123456789ab", [5.0, 0.0, 1.0], 2)]
 
 
 async def test_search_accepts_shared_fake_embedder() -> None:
@@ -99,6 +99,6 @@ async def test_search_accepts_shared_fake_embedder() -> None:
         default_top_k=2,
     )
 
-    await service.search(user_id="user-a", query="alpha", top_k=1)
+    await service.search(user_id="0197e50a-1234-7abc-8def-0123456789ab", query="alpha", top_k=1)
 
-    assert repository.calls == [("user-a", [1.0, 0.0, 0.0], 1)]
+    assert repository.calls == [("0197e50a-1234-7abc-8def-0123456789ab", [1.0, 0.0, 0.0], 1)]

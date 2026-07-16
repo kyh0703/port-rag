@@ -129,7 +129,7 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
 
     response = client.post(
         "/documents",
-        data={"userId": "user-a"},
+        data={"userId": "0197e50a-1234-7abc-8def-0123456789ab"},
         files={"file": ("notes.md", b"alpha", "text/markdown")},
     )
 
@@ -141,7 +141,7 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
         "message": "Created",
         "data": {
             "id": str(document_id),
-            "userId": "user-a",
+            "userId": "0197e50a-1234-7abc-8def-0123456789ab",
             "name": "notes.md",
             "mime": "text/markdown",
             "status": "processing",
@@ -150,7 +150,7 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
             "updatedAt": "2026-07-09T12:00:00Z",
         },
     }
-    assert repository.created == [("user-a", "notes.md", "text/markdown")]
+    assert repository.created == [("0197e50a-1234-7abc-8def-0123456789ab", "notes.md", "text/markdown")]
     assert len(worker.jobs) == 1
     assert worker.jobs[0].document_id == document_id
     assert worker.jobs[0].path == storage.saved_paths[0]
@@ -165,16 +165,16 @@ def test_list_documents_is_scoped_by_user_id(tmp_path: Path) -> None:
 
     user_a = client.post(
         "/documents",
-        data={"userId": "user-a"},
+        data={"userId": "0197e50a-1234-7abc-8def-0123456789ab"},
         files={"file": ("a.md", b"a", "text/markdown")},
     ).json()["data"]
     client.post(
         "/documents",
-        data={"userId": "user-b"},
+        data={"userId": "0197e50a-1234-7abc-8def-0123456789ac"},
         files={"file": ("b.md", b"b", "text/markdown")},
     )
 
-    response = client.get("/documents", params={"userId": "user-a"})
+    response = client.get("/documents", params={"userId": "0197e50a-1234-7abc-8def-0123456789ab"})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -191,11 +191,11 @@ def test_get_document_is_scoped_by_user_id(tmp_path: Path) -> None:
     client = build_client(repository, worker, storage)
     document = client.post(
         "/documents",
-        data={"userId": "user-a"},
+        data={"userId": "0197e50a-1234-7abc-8def-0123456789ab"},
         files={"file": ("notes.md", b"a", "text/markdown")},
     ).json()["data"]
 
-    not_found = client.get(f"/documents/{document['id']}", params={"userId": "user-b"})
+    not_found = client.get(f"/documents/{document['id']}", params={"userId": "0197e50a-1234-7abc-8def-0123456789ac"})
 
     assert not_found.status_code == 404
     assert not_found.json() == {
@@ -205,7 +205,7 @@ def test_get_document_is_scoped_by_user_id(tmp_path: Path) -> None:
         "data": None,
     }
 
-    response = client.get(f"/documents/{document['id']}", params={"userId": "user-a"})
+    response = client.get(f"/documents/{document['id']}", params={"userId": "0197e50a-1234-7abc-8def-0123456789ab"})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -222,17 +222,17 @@ def test_delete_document_is_scoped_by_user_id(tmp_path: Path) -> None:
     client = build_client(repository, worker, storage)
     document = client.post(
         "/documents",
-        data={"userId": "user-a"},
+        data={"userId": "0197e50a-1234-7abc-8def-0123456789ab"},
         files={"file": ("notes.md", b"a", "text/markdown")},
     ).json()["data"]
 
     assert (
-        client.delete(f"/documents/{document['id']}", params={"userId": "user-b"}).status_code
+        client.delete(f"/documents/{document['id']}", params={"userId": "0197e50a-1234-7abc-8def-0123456789ac"}).status_code
         == 404
     )
     assert uuid.UUID(document["id"]) in repository.documents
 
-    response = client.delete(f"/documents/{document['id']}", params={"userId": "user-a"})
+    response = client.delete(f"/documents/{document['id']}", params={"userId": "0197e50a-1234-7abc-8def-0123456789ab"})
 
     assert response.status_code == 200
     assert response.json() == {
@@ -272,7 +272,7 @@ def test_post_deletes_saved_file_when_document_create_fails(tmp_path: Path) -> N
 
     response = client.post(
         "/documents",
-        data={"userId": "user-a"},
+        data={"userId": "0197e50a-1234-7abc-8def-0123456789ab"},
         files={"file": ("notes.md", b"alpha", "text/markdown")},
     )
 
@@ -301,7 +301,7 @@ def test_post_deletes_saved_file_when_worker_enqueue_fails(tmp_path: Path) -> No
 
     response = client.post(
         "/documents",
-        data={"userId": "user-a"},
+        data={"userId": "0197e50a-1234-7abc-8def-0123456789ab"},
         files={"file": ("notes.md", b"alpha", "text/markdown")},
     )
 
