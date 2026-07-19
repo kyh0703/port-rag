@@ -40,6 +40,10 @@ class TextEmbedder(Protocol):
     async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
+class ReindexFailedError(Exception):
+    """Raised after a reindex failure has been persisted on its document."""
+
+
 class IngestStore(Protocol):
     async def replace_chunks_and_mark_ready(
         self,
@@ -49,3 +53,23 @@ class IngestStore(Protocol):
     ) -> None: ...
 
     async def mark_failed(self, document_id: uuid.UUID, error: str) -> None: ...
+
+    async def get_chunks_for_reindex(
+        self,
+        document_id: uuid.UUID,
+        user_id: str,
+    ) -> list[IngestChunk] | None: ...
+
+    async def replace_embeddings_and_mark_ready(
+        self,
+        document_id: uuid.UUID,
+        user_id: str,
+        embeddings: list[list[float]],
+    ) -> bool: ...
+
+    async def mark_reindex_failed(
+        self,
+        document_id: uuid.UUID,
+        user_id: str,
+        error: str,
+    ) -> bool: ...

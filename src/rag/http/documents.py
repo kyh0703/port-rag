@@ -29,6 +29,7 @@ from rag.db.models import DocumentStatus
 from rag.http.responses import ApiResponse
 from rag.http.responses import ok
 from rag.ingest.types import IngestJob
+from rag.ingest.types import ReindexFailedError
 
 
 class SessionFactory(Protocol):
@@ -75,6 +76,11 @@ class DocumentRepository(Protocol):
 
 class IngestQueue(Protocol):
     async def enqueue(self, job: IngestJob) -> None:
+        pass
+
+
+class DocumentReindexer(Protocol):
+    async def reindex(self, *, document_id: uuid.UUID, user_id: str) -> bool:
         pass
 
 
@@ -181,6 +187,7 @@ def create_documents_router(
     repository: DocumentRepository,
     worker: IngestQueue,
     storage: UploadStorage | None = None,
+    reindexer: DocumentReindexer | None = None,
 ) -> APIRouter:
     router = APIRouter()
     upload_storage = storage or LocalUploadStorage()
@@ -214,6 +221,43 @@ def create_documents_router(
                 )
             raise
         return ok(_to_response(document), status_code=201)
+
+    @router.post(
+        "/documents/{document_id}/reindex",
+        response_model=ApiResponse[DocumentResponse],
+        response_model_exclude={"error"},
+    )
+    async def reindex_document(
+        document_id: uuid.UUID,
+        user_id: UserIdQuery,
+    ) -> ApiResponse[DocumentResponse]:
+        normalized_user_id = str(user_id)
+        document = await repository.get_document(
+            document_id=document_id,
+            user_id=normalized_user_id,
+        )
+        if document is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        if document.status == DocumentStatus.PROCESSING.value:
+            raise HTTPException(status_code=409, detail="document is still processing")
+        if reindexer is None:
+            raise RuntimeError("document reindexer is not configured")
+        try:
+            reindexed = await reindexer.reindex(
+                document_id=document_id,
+                user_id=normalized_user_id,
+            )
+        except ReindexFailedError as exc:
+            raise HTTPException(status_code=422, detail="document reindex failed") from exc
+        if not reindexed:
+            raise HTTPException(status_code=404, detail="document not found")
+        document = await repository.get_document(
+            document_id=document_id,
+            user_id=normalized_user_id,
+        )
+        if document is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        return ok(_to_response(document))
 
     @router.get(
         "/documents",

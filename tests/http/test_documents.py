@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from rag.db.models import DocumentStatus
 from rag.http.documents import DocumentRecord
 from rag.http.documents import create_documents_router
 from rag.http.responses import register_exception_handlers
+from rag.ingest.types import ReindexFailedError
 
 
 NOW = datetime(2026, 7, 9, 12, 0, tzinfo=UTC)
@@ -79,6 +81,27 @@ class FakeWorker:
         self.jobs.append(job)
 
 
+class FakeReindexer:
+    def __init__(self, repository: FakeDocumentRepository) -> None:
+        self._repository = repository
+        self.calls: list[tuple[uuid.UUID, str]] = []
+        self.fail = False
+
+    async def reindex(self, *, document_id: uuid.UUID, user_id: str) -> bool:
+        self.calls.append((document_id, user_id))
+        document = self._repository.documents.get(document_id)
+        if document is None or document.user_id != user_id:
+            return False
+        self._repository.documents[document_id] = replace(
+            document,
+            status=DocumentStatus.FAILED.value if self.fail else DocumentStatus.READY.value,
+            error="embedding provider unavailable" if self.fail else None,
+        )
+        if self.fail:
+            raise ReindexFailedError("embedding provider unavailable")
+        return True
+
+
 class FakeUploadStorage:
     def __init__(self, base_path: Path) -> None:
         self.base_path = base_path
@@ -95,13 +118,19 @@ def build_client(
     repository: FakeDocumentRepository,
     worker: FakeWorker,
     storage: FakeUploadStorage,
+    reindexer: FakeReindexer | None = None,
     *,
     raise_server_exceptions: bool = True,
 ) -> TestClient:
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(
-        create_documents_router(repository=repository, worker=worker, storage=storage)
+        create_documents_router(
+            repository=repository,
+            worker=worker,
+            storage=storage,
+            reindexer=reindexer,
+        )
     )
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
@@ -241,6 +270,123 @@ def test_delete_document_is_scoped_by_user_id(tmp_path: Path) -> None:
         "data": None,
     }
     assert uuid.UUID(document["id"]) not in repository.documents
+
+
+def test_reindex_updates_the_owned_document_and_rejects_another_owner(tmp_path: Path) -> None:
+    repository = FakeDocumentRepository()
+    reindexer = FakeReindexer(repository)
+    client = build_client(
+        repository,
+        FakeWorker(),
+        FakeUploadStorage(tmp_path),
+        reindexer=reindexer,
+    )
+    owner_id = "0197e50a-1234-7abc-8def-0123456789ab"
+    other_user_id = "0197e50a-1234-7abc-8def-0123456789ac"
+    document = client.post(
+        "/documents",
+        data={"userId": owner_id},
+        files={"file": ("notes.md", b"alpha", "text/markdown")},
+    ).json()["data"]
+    repository.documents[uuid.UUID(document["id"])] = replace(
+        repository.documents[uuid.UUID(document["id"])],
+        status=DocumentStatus.FAILED.value,
+        error="previous embedding failed",
+    )
+
+    not_found = client.post(
+        f"/documents/{document['id']}/reindex",
+        params={"userId": other_user_id},
+    )
+
+    assert not_found.status_code == 404
+    assert reindexer.calls == []
+
+    response = client.post(
+        f"/documents/{document['id']}/reindex",
+        params={"userId": owner_id},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "statusCode": 200,
+        "message": "OK",
+        "data": {**document, "status": "ready"},
+    }
+    assert reindexer.calls == [(uuid.UUID(document["id"]), owner_id)]
+
+
+def test_reindex_failure_returns_non_success_and_keeps_failed_document(tmp_path: Path) -> None:
+    repository = FakeDocumentRepository()
+    reindexer = FakeReindexer(repository)
+    reindexer.fail = True
+    client = build_client(
+        repository,
+        FakeWorker(),
+        FakeUploadStorage(tmp_path),
+        reindexer=reindexer,
+    )
+    user_id = "0197e50a-1234-7abc-8def-0123456789ab"
+    document = client.post(
+        "/documents",
+        data={"userId": user_id},
+        files={"file": ("notes.md", b"alpha", "text/markdown")},
+    ).json()["data"]
+    repository.documents[uuid.UUID(document["id"])] = replace(
+        repository.documents[uuid.UUID(document["id"])],
+        status=DocumentStatus.READY.value,
+    )
+
+    response = client.post(f"/documents/{document['id']}/reindex", params={"userId": user_id})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "statusCode": 422,
+        "message": "document reindex failed",
+        "error": "Unprocessable Entity",
+        "data": None,
+    }
+    stored_document = repository.documents[uuid.UUID(document["id"])]
+    assert stored_document.status == DocumentStatus.FAILED.value
+    assert stored_document.error == "embedding provider unavailable"
+
+
+def test_reindex_rejects_processing_document_without_calling_reindexer(tmp_path: Path) -> None:
+    repository = FakeDocumentRepository()
+    reindexer = FakeReindexer(repository)
+    client = build_client(
+        repository,
+        FakeWorker(),
+        FakeUploadStorage(tmp_path),
+        reindexer=reindexer,
+    )
+    user_id = "0197e50a-1234-7abc-8def-0123456789ab"
+    document = client.post(
+        "/documents",
+        data={"userId": user_id},
+        files={"file": ("notes.md", b"alpha", "text/markdown")},
+    ).json()["data"]
+
+    response = client.post(f"/documents/{document['id']}/reindex", params={"userId": user_id})
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "statusCode": 409,
+        "message": "document is still processing",
+        "error": "Conflict",
+        "data": None,
+    }
+    assert reindexer.calls == []
+    assert repository.documents[uuid.UUID(document["id"])] == DocumentRecord(
+        id=uuid.UUID(document["id"]),
+        user_id=user_id,
+        name="notes.md",
+        mime="text/markdown",
+        status=DocumentStatus.PROCESSING.value,
+        error=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
 
 
 def test_read_endpoints_require_user_id(tmp_path: Path) -> None:

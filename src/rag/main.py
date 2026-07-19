@@ -79,21 +79,20 @@ async def serve() -> None:
     session_factory = create_session_factory(engine)
     embedder = _create_embedder(settings, metrics=metrics)
 
-    worker = IngestWorker(
-        IngestPipeline(
-            parser=DoclingParser(),
-            chunker=HybridDoclingChunker(),
-            embedder=embedder,
-            store=SqlAlchemyIngestStore(session_factory),
-        ),
-        metrics=metrics,
+    pipeline = IngestPipeline(
+        parser=DoclingParser(),
+        chunker=HybridDoclingChunker(),
+        embedder=embedder,
+        store=SqlAlchemyIngestStore(session_factory),
     )
+    worker = IngestWorker(pipeline, metrics=metrics)
     worker.start()
 
     runtime_app.include_router(
         create_documents_router(
             repository=SqlAlchemyDocumentRepository(session_factory),
             worker=worker,
+            reindexer=pipeline,
         )
     )
 
