@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from rag.db.base import metadata
+from rag.db.database_url import normalize_asyncpg_url
 import rag.db.models  # noqa: F401
 
 
@@ -20,7 +21,7 @@ if config.config_file_name is not None:
 
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", normalize_asyncpg_url(database_url))
 
 target_metadata = metadata
 

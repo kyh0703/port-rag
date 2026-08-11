@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from rag.db.database_url import normalize_asyncpg_url
 from rag.metrics import Metrics
 
 
 def create_engine(database_url: str, *, metrics: Metrics | None = None) -> AsyncEngine:
-    engine = create_async_engine(database_url, pool_pre_ping=True)
+    engine = create_async_engine(normalize_asyncpg_url(database_url), pool_pre_ping=True)
     if metrics is None:
         return engine
 
