@@ -94,3 +94,37 @@ def test_chunks_table_metadata() -> None:
     assert embedding_index.dialect_options["postgresql"]["ops"] == {
         "embedding": "vector_cosine_ops"
     }
+
+
+def test_knowledge_revision_tables_are_immutable_copies() -> None:
+    revisions = metadata.tables["knowledge_revisions"]
+    chunks = metadata.tables["knowledge_revision_chunks"]
+
+    assert set(revisions.columns.keys()) == {"id", "user_id", "created_at"}
+    assert revisions.c.id.primary_key
+    assert not revisions.c.user_id.nullable
+    assert not revisions.c.created_at.nullable
+    [user_index] = list(revisions.indexes)
+    assert [column.name for column in user_index.columns] == ["user_id"]
+
+    assert set(chunks.columns.keys()) == {
+        "id",
+        "revision_id",
+        "source_document_id",
+        "document_name",
+        "seq",
+        "text",
+        "metadata",
+        "embedding",
+    }
+    assert chunks.c.id.primary_key
+    assert not chunks.c.source_document_id.nullable
+    assert chunks.c.source_document_id.foreign_keys == set()
+    [revision_fk] = chunks.c.revision_id.foreign_keys
+    assert revision_fk.column.table.name == "knowledge_revisions"
+    assert revision_fk.ondelete == "RESTRICT"
+    assert isinstance(chunks.c.embedding.type, VECTOR)
+    assert chunks.c.embedding.type.dim == 1536
+    index_names = {index.name for index in chunks.indexes}
+    assert "ix_knowledge_revision_chunks_revision_seq" in index_names
+    assert "ix_knowledge_revision_chunks_embedding_hnsw_cosine" in index_names

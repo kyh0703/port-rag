@@ -65,14 +65,17 @@ async def serve() -> None:
     from rag.db.session import create_session_factory
     from rag.http.documents import SqlAlchemyDocumentRepository
     from rag.http.documents import create_documents_router
+    from rag.http.knowledge_revisions import create_knowledge_revisions_router
     from rag.http.search import create_search_router
     from rag.ingest.chunker import HybridDoclingChunker
     from rag.ingest.parser import DoclingParser
     from rag.ingest.pipeline import IngestPipeline
     from rag.ingest.store import SqlAlchemyIngestStore
     from rag.ingest.worker import IngestWorker
+    from rag.knowledge.revisions import KnowledgeRevisionRepository
     from rag.search.repository import SearchRepository
     from rag.search.service import SearchService
+    from rag.security.retrieval_capability import RetrievalCapabilityVerifier
 
     metrics = runtime_app.state.metrics
     engine = create_engine(settings.DATABASE_URL, metrics=metrics)
@@ -101,8 +104,22 @@ async def serve() -> None:
         repository=SearchRepository(session_factory),
         default_top_k=settings.TOP_K_DEFAULT,
     )
+    capability_verifier = RetrievalCapabilityVerifier(
+        settings.RAG_RETRIEVAL_CAPABILITY_SECRET
+    )
 
-    runtime_app.include_router(create_search_router(service=search_service))
+    runtime_app.include_router(
+        create_search_router(
+            service=search_service,
+            capability_verifier=capability_verifier,
+        )
+    )
+    runtime_app.include_router(
+        create_knowledge_revisions_router(
+            repository=KnowledgeRevisionRepository(session_factory),
+            capability_verifier=capability_verifier,
+        )
+    )
 
     http_config = uvicorn.Config(
         runtime_app,

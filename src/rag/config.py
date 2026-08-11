@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str = Field(..., min_length=1)
+    RAG_RETRIEVAL_CAPABILITY_SECRET: str = Field(..., min_length=32)
     OPENAI_API_KEY: str | None = None
     EMBEDDER: Literal["openai", "fake"] = "openai"
     HTTP_PORT: int = Field(8000, ge=1, le=65535)

@@ -7,6 +7,7 @@ from rag.config import Settings, get_settings
 
 ENV_VARS = [
     "DATABASE_URL",
+    "RAG_RETRIEVAL_CAPABILITY_SECRET",
     "OPENAI_API_KEY",
     "EMBEDDER",
     "HTTP_PORT",
@@ -29,13 +30,28 @@ def clean_env(monkeypatch):
 
 def make_settings(**env):
     """Build Settings from explicit env only (ignore any .env file)."""
-    return Settings(_env_file=None, **env)
+    return Settings(
+        _env_file=None,
+        RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
+        **env,
+    )
 
 
 def test_missing_database_url_raises():
     with pytest.raises(ValidationError) as exc_info:
         make_settings(OPENAI_API_KEY="sk-test")
     assert "DATABASE_URL" in str(exc_info.value)
+
+
+def test_short_retrieval_capability_secret_is_rejected():
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            _env_file=None,
+            DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
+            EMBEDDER="fake",
+            RAG_RETRIEVAL_CAPABILITY_SECRET="short",
+        )
+    assert "RAG_RETRIEVAL_CAPABILITY_SECRET" in str(exc_info.value)
 
 
 def test_defaults_applied():
@@ -99,6 +115,10 @@ def test_invalid_port_rejected(port):
 def test_get_settings_is_cached(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://port:port@localhost:5432/port")
     monkeypatch.setenv("EMBEDDER", "fake")
+    monkeypatch.setenv(
+        "RAG_RETRIEVAL_CAPABILITY_SECRET",
+        "a-32-byte-minimum-retrieval-secret",
+    )
     first = get_settings()
     second = get_settings()
     assert first is second

@@ -54,3 +54,24 @@ async def test_repository_query_is_scoped_by_user_id() -> None:
     assert "documents.status = %(status_1)s" in compiled
     assert compiled.count("documents.user_id") == 1
     assert "LIMIT" in compiled
+
+
+async def test_revision_query_reads_only_immutable_revision_chunks() -> None:
+    session_factory = FakeSessionFactory()
+    repository = SearchRepository(session_factory)
+    revision_id = "0197e50a-1234-7abc-8def-0123456789ac"
+
+    await repository.search_revision(
+        user_id="0197e50a-1234-7abc-8def-0123456789ab",
+        knowledge_revision_id=revision_id,
+        embedding=[0.1, 0.2, 0.3],
+        top_k=7,
+    )
+
+    compiled = str(session_factory.session.statement.compile(dialect=postgresql.dialect()))
+    assert "FROM knowledge_revision_chunks" in compiled
+    assert "JOIN knowledge_revisions" in compiled
+    assert "JOIN documents" not in compiled
+    assert "knowledge_revision_chunks.revision_id = %(revision_id_1)s" in compiled
+    assert "knowledge_revisions.user_id = %(user_id_1)s" in compiled
+    assert "LIMIT" in compiled

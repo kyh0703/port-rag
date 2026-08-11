@@ -1,0 +1,1 @@
+"""Immutable knowledge revision support."""

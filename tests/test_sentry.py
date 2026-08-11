@@ -49,6 +49,7 @@ rag.main.sentry_sdk.init = init_with_memory_transport
 settings = Settings(
     _env_file=None,
     DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
+    RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
     EMBEDDER="fake",
     SENTRY_DSN="https://public@example.ingest.sentry.io/1",
 )
@@ -106,6 +107,7 @@ def make_settings(*, sentry_dsn: str | None = None) -> Settings:
     return Settings(
         _env_file=None,
         DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
+        RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
         EMBEDDER="fake",
         SENTRY_DSN=sentry_dsn,
     )

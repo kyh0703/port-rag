@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 from typing import Protocol
+import uuid
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from rag.db.models import Document
 from rag.db.models import DocumentChunk
 from rag.db.models import DocumentStatus
+from rag.db.models import KnowledgeRevisionChunk
+from rag.db.models import KnowledgeRevision
 from rag.search.types import SearchHit
 
 
@@ -47,6 +50,54 @@ class SearchRepository:
             .where(
                 Document.user_id == user_id,
                 Document.status == DocumentStatus.READY.value,
+            )
+            .order_by(distance)
+            .limit(top_k)
+        )
+
+        async with self._session_factory() as session:
+            result = await session.execute(statement)
+            rows = result.mappings().all()
+
+        return [
+            SearchHit(
+                chunk_id=str(row["chunk_id"]),
+                document_id=str(row["document_id"]),
+                document_name=str(row["document_name"]),
+                text=str(row["text"]),
+                score=float(row["score"]),
+                metadata=_string_metadata(row["metadata"]),
+                seq=int(row["seq"]),
+            )
+            for row in rows
+        ]
+
+    async def search_revision(
+        self,
+        *,
+        user_id: str,
+        knowledge_revision_id: str,
+        embedding: Sequence[float],
+        top_k: int,
+    ) -> list[SearchHit]:
+        distance = KnowledgeRevisionChunk.embedding.cosine_distance(list(embedding))
+        statement = (
+            sa.select(
+                KnowledgeRevisionChunk.id.label("chunk_id"),
+                KnowledgeRevisionChunk.source_document_id.label("document_id"),
+                KnowledgeRevisionChunk.document_name.label("document_name"),
+                KnowledgeRevisionChunk.text.label("text"),
+                (sa.literal(1.0) - distance).label("score"),
+                KnowledgeRevisionChunk.metadata_.label("metadata"),
+                KnowledgeRevisionChunk.seq.label("seq"),
+            )
+            .join(
+                KnowledgeRevision,
+                KnowledgeRevision.id == KnowledgeRevisionChunk.revision_id,
+            )
+            .where(
+                KnowledgeRevisionChunk.revision_id == uuid.UUID(knowledge_revision_id),
+                KnowledgeRevision.user_id == uuid.UUID(user_id),
             )
             .order_by(distance)
             .limit(top_k)

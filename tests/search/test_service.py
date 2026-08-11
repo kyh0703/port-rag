@@ -27,6 +27,16 @@ class InMemoryRepository:
         self.calls.append((user_id, embedding, top_k))
         return [row.hit for row in self.rows if row.user_id == user_id][:top_k]
 
+    async def search_revision(
+        self,
+        user_id: str,
+        knowledge_revision_id: str,
+        embedding: list[float],
+        top_k: int,
+    ) -> list[SearchHit]:
+        self.calls.append((user_id, knowledge_revision_id, embedding, top_k))
+        return [row.hit for row in self.rows][:top_k]
+
 
 async def test_search_is_scoped_to_requested_user() -> None:
     repository = InMemoryRepository(
@@ -102,3 +112,24 @@ async def test_search_accepts_shared_fake_embedder() -> None:
     await service.search(user_id="0197e50a-1234-7abc-8def-0123456789ab", query="alpha", top_k=1)
 
     assert repository.calls == [("0197e50a-1234-7abc-8def-0123456789ab", [1.0, 0.0, 0.0], 1)]
+
+
+async def test_revision_search_uses_only_the_exact_revision_id() -> None:
+    repository = InMemoryRepository([])
+    service = SearchService(embedder=FakeEmbedder(), repository=repository, default_top_k=5)
+
+    await service.search_revision(
+        user_id="0197e50a-1234-7abc-8def-0123456789ab",
+        knowledge_revision_id="0197e50a-1234-7abc-8def-0123456789ac",
+        query="alpha",
+        top_k=3,
+    )
+
+    assert repository.calls == [
+        (
+            "0197e50a-1234-7abc-8def-0123456789ab",
+            "0197e50a-1234-7abc-8def-0123456789ac",
+            [5.0, 0.0, 1.0],
+            3,
+        )
+    ]

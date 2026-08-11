@@ -281,11 +281,11 @@ def test_reindex_updates_the_owned_document_and_rejects_another_owner(tmp_path: 
         FakeUploadStorage(tmp_path),
         reindexer=reindexer,
     )
-    owner_id = "0197e50a-1234-7abc-8def-0123456789ab"
+    user_id = "0197e50a-1234-7abc-8def-0123456789ab"
     other_user_id = "0197e50a-1234-7abc-8def-0123456789ac"
     document = client.post(
         "/documents",
-        data={"userId": owner_id},
+        data={"userId": user_id},
         files={"file": ("notes.md", b"alpha", "text/markdown")},
     ).json()["data"]
     repository.documents[uuid.UUID(document["id"])] = replace(
@@ -304,7 +304,7 @@ def test_reindex_updates_the_owned_document_and_rejects_another_owner(tmp_path: 
 
     response = client.post(
         f"/documents/{document['id']}/reindex",
-        params={"userId": owner_id},
+        params={"userId": user_id},
     )
 
     assert response.status_code == 200
@@ -313,7 +313,7 @@ def test_reindex_updates_the_owned_document_and_rejects_another_owner(tmp_path: 
         "message": "OK",
         "data": {**document, "status": "ready"},
     }
-    assert reindexer.calls == [(uuid.UUID(document["id"]), owner_id)]
+    assert reindexer.calls == [(uuid.UUID(document["id"]), user_id)]
 
 
 def test_reindex_failure_returns_non_success_and_keeps_failed_document(tmp_path: Path) -> None:
