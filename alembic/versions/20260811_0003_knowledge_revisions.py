@@ -79,7 +79,10 @@ def upgrade() -> None:
           RAISE EXCEPTION 'knowledge revisions are immutable';
         END;
         $$ LANGUAGE plpgsql;
-
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER knowledge_revision_rows_are_immutable
         BEFORE UPDATE OR DELETE ON knowledge_revisions
         FOR EACH ROW EXECUTE FUNCTION knowledge_revision_rows_are_immutable();
@@ -93,7 +96,10 @@ def upgrade() -> None:
           RAISE EXCEPTION 'knowledge revision chunks are immutable';
         END;
         $$ LANGUAGE plpgsql;
-
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER knowledge_revision_chunks_are_immutable
         BEFORE UPDATE OR DELETE ON knowledge_revision_chunks
         FOR EACH ROW EXECUTE FUNCTION knowledge_revision_chunks_are_immutable();

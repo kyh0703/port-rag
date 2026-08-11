@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 
@@ -19,6 +20,21 @@ def test_knowledge_revision_migration_copies_chunks_and_blocks_mutation() -> Non
     assert "knowledge_revision_rows_are_immutable" in migration
     assert "knowledge_revision_chunks_are_immutable" in migration
     assert "BEFORE UPDATE OR DELETE" in migration
+
+    execute_sql = [
+        ast.literal_eval(node.args[0])
+        for node in ast.walk(ast.parse(migration))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "op"
+        and node.func.attr == "execute"
+        and node.args
+    ]
+    assert all(
+        not ("CREATE FUNCTION" in statement and "CREATE TRIGGER" in statement)
+        for statement in execute_sql
+    )
 
 
 def test_container_packages_alembic_migrations() -> None:
