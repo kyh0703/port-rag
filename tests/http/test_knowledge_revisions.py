@@ -32,6 +32,8 @@ class FakeRevisionRepository:
             tuple[str, list[uuid.UUID] | None, uuid.UUID | None]
         ] = []
         self.get_calls: list[tuple[uuid.UUID, str]] = []
+        self.list_calls: list[str] = []
+        self.revisions: list[KnowledgeRevisionRecord] = []
         self.missing = False
         self.get_missing = False
 
@@ -57,6 +59,10 @@ class FakeRevisionRepository:
         if self.missing or self.get_missing:
             return None
         return _revision(user_id, revision_id=revision_id)
+
+    async def list(self, *, user_id: str) -> list[KnowledgeRevisionRecord]:
+        self.list_calls.append(user_id)
+        return self.revisions
 
 
 def _revision(
@@ -161,6 +167,39 @@ def test_get_revision_is_user_scoped() -> None:
 
     assert response.status_code == 200
     assert repository.get_calls == [(uuid.UUID(revision_id), user_id)]
+
+
+def test_list_revisions_is_user_scoped_and_preserves_newest_first_contract() -> None:
+    repository = FakeRevisionRepository()
+    repository.revisions = [
+        _revision(USER_ID, revision_id=uuid.UUID("0197e50a-1234-7abc-8def-0123456789ac")),
+        KnowledgeRevisionRecord(
+            id=uuid.UUID("0197e50a-1234-7abc-8def-0123456789ad"),
+            user_id=uuid.UUID(USER_ID),
+            chunk_count=1,
+            created_at=datetime(2026, 8, 10, tzinfo=UTC),
+        ),
+    ]
+    client = build_client(repository)
+
+    response = client.get("/knowledge-revisions", params={"userId": USER_ID})
+
+    assert response.status_code == 200
+    assert repository.list_calls == [USER_ID]
+    assert response.json()["data"] == [
+        {
+            "id": "0197e50a-1234-7abc-8def-0123456789ac",
+            "userId": USER_ID,
+            "chunkCount": 2,
+            "createdAt": "2026-08-11T00:00:00Z",
+        },
+        {
+            "id": "0197e50a-1234-7abc-8def-0123456789ad",
+            "userId": USER_ID,
+            "chunkCount": 1,
+            "createdAt": "2026-08-10T00:00:00Z",
+        },
+    ]
 
 
 def test_create_revision_rejects_an_unready_selected_document() -> None:
