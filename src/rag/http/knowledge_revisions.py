@@ -41,6 +41,9 @@ class RevisionRepository(Protocol):
     ) -> KnowledgeRevisionRecord | None:
         pass
 
+    async def list(self, *, user_id: str) -> list[KnowledgeRevisionRecord]:
+        pass
+
 
 class RetrievalCapabilityBoundary(Protocol):
     def verify(self, token: str, *, knowledge_revision_id: str) -> str:
@@ -113,6 +116,17 @@ def create_knowledge_revisions_router(
         except KnowledgeRevisionNotFound as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return ok(_to_response(revision), status_code=201)
+
+    @router.get(
+        "/knowledge-revisions",
+        response_model=ApiResponse[list[KnowledgeRevisionResponse]],
+        response_model_exclude={"error"},
+    )
+    async def list_revisions(
+        user_id: UserIdQuery,
+    ) -> ApiResponse[list[KnowledgeRevisionResponse]]:
+        revisions = await repository.list(user_id=str(user_id))
+        return ok([_to_response(revision) for revision in revisions])
 
     @router.get(
         "/knowledge-revisions/{revision_id}",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC
+from datetime import datetime
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -24,6 +25,9 @@ class FakeResult:
 
     def mappings(self) -> FakeMappings:
         return FakeMappings(self._rows)
+
+    def all(self) -> list[dict[str, object]]:
+        return self._rows
 
 
 class FakeSession:
@@ -114,3 +118,35 @@ async def test_create_revision_rejects_missing_or_unready_selected_document() ->
             user_id="0197e50a-1234-7abc-8def-0123456789ab",
             document_ids=[uuid.uuid4()],
         )
+
+
+async def test_list_revisions_is_owner_scoped_and_newest_first() -> None:
+    user_id = uuid.UUID("0197e50a-1234-7abc-8def-0123456789ab")
+    newest = uuid.UUID("0197e50a-1234-7abc-8def-0123456789ac")
+    oldest = uuid.UUID("0197e50a-1234-7abc-8def-0123456789ad")
+    session = FakeSession(
+        [
+            {
+                "id": newest,
+                "user_id": user_id,
+                "chunk_count": 3,
+                "created_at": datetime(2026, 8, 12, tzinfo=UTC),
+            },
+            {
+                "id": oldest,
+                "user_id": user_id,
+                "chunk_count": 1,
+                "created_at": datetime(2026, 8, 12, tzinfo=UTC),
+            },
+        ]
+    )
+    repository = KnowledgeRevisionRepository(FakeSessionFactory(session))
+
+    revisions = await repository.list(user_id=str(user_id))
+
+    assert [revision.id for revision in revisions] == [newest, oldest]
+    assert [revision.chunk_count for revision in revisions] == [3, 1]
+    statement = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    assert "knowledge_revisions.user_id = %(user_id_1)s" in statement
+    assert "knowledge_revisions.created_at DESC" in statement
+    assert "knowledge_revisions.id DESC" in statement

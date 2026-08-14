@@ -142,3 +142,34 @@ class KnowledgeRevisionRepository:
             chunk_count=int(chunk_count),
             created_at=revision.created_at,
         )
+
+    async def list(self, *, user_id: str) -> list[KnowledgeRevisionRecord]:
+        statement = (
+            sa.select(
+                KnowledgeRevision.id.label("id"),
+                KnowledgeRevision.user_id.label("user_id"),
+                sa.func.count(KnowledgeRevisionChunk.id).label("chunk_count"),
+                KnowledgeRevision.created_at.label("created_at"),
+            )
+            .outerjoin(
+                KnowledgeRevisionChunk,
+                KnowledgeRevisionChunk.revision_id == KnowledgeRevision.id,
+            )
+            .where(KnowledgeRevision.user_id == uuid.UUID(user_id))
+            .group_by(KnowledgeRevision.id)
+            .order_by(
+                KnowledgeRevision.created_at.desc(),
+                KnowledgeRevision.id.desc(),
+            )
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).mappings().all()
+        return [
+            KnowledgeRevisionRecord(
+                id=row["id"],
+                user_id=row["user_id"],
+                chunk_count=int(row["chunk_count"]),
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
