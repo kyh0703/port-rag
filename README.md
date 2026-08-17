@@ -23,6 +23,14 @@ EMBEDDER=openai
 OPENAI_API_KEY=sk-...
 ```
 
+## Configuration files
+
+Non-secret defaults are tracked in `config/default.yaml`. Copy
+`config/local.example.yaml` to the gitignored `config/local.yaml` for local
+database and provider credentials. YAML category names are organizational only;
+environment variables override YAML and existing `.env`/production injection
+remain supported.
+
 ## Environment
 
 - `DATABASE_URL`: async SQLAlchemy URL, for example

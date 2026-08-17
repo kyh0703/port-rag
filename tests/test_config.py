@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+import rag.config as config
 from rag.config import Settings, get_settings
 
 ENV_VARS = [
@@ -122,3 +123,96 @@ def test_get_settings_is_cached(monkeypatch):
     first = get_settings()
     second = get_settings()
     assert first is second
+
+
+def test_categorized_local_yaml_is_loaded_as_flat_settings(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.yaml").write_text(
+        """
+database:
+  DATABASE_URL: postgresql+asyncpg://yaml:y@localhost:5432/yaml
+auth:
+  RAG_RETRIEVAL_CAPABILITY_SECRET: yaml-secret-that-is-long-enough-123
+embedding:
+  EMBEDDER: fake
+  EMBEDDING_DIM: 768
+"""
+    )
+    monkeypatch.setattr(config, "CONFIG_ROOT", tmp_path)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.DATABASE_URL.endswith("/yaml")
+    assert settings.EMBEDDER == "fake"
+    assert settings.EMBEDDING_DIM == 768
+
+
+def test_environment_overrides_categorized_yaml(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.yaml").write_text(
+        """
+database:
+  DATABASE_URL: postgresql+asyncpg://yaml:y@localhost:5432/yaml
+auth:
+  RAG_RETRIEVAL_CAPABILITY_SECRET: yaml-secret-that-is-long-enough-123
+embedding:
+  EMBEDDER: fake
+"""
+    )
+    monkeypatch.setattr(config, "CONFIG_ROOT", tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://env:e@localhost:5432/env")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.DATABASE_URL.endswith("/env")
+
+
+def test_duplicate_yaml_leaf_is_rejected(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.yaml").write_text(
+        """
+database:
+  DATABASE_URL: postgresql+asyncpg://yaml:y@localhost:5432/yaml
+other:
+  DATABASE_URL: postgresql+asyncpg://other:o@localhost:5432/other
+"""
+    )
+    monkeypatch.setattr(config, "CONFIG_ROOT", tmp_path)
+
+    with pytest.raises(ValueError, match="duplicate YAML leaf DATABASE_URL"):
+        Settings(_env_file=None)
+
+
+def test_non_scalar_yaml_leaf_is_rejected(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.yaml").write_text(
+        """
+database:
+  DATABASE_URL:
+    nested: value
+"""
+    )
+    monkeypatch.setattr(config, "CONFIG_ROOT", tmp_path)
+
+    with pytest.raises(ValueError, match="must be scalar"):
+        Settings(_env_file=None)
+
+
+def test_duplicate_yaml_key_in_same_mapping_is_rejected(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "local.yaml").write_text(
+        """
+database:
+  DATABASE_URL: first
+  DATABASE_URL: second
+"""
+    )
+    monkeypatch.setattr(config, "CONFIG_ROOT", tmp_path)
+
+    with pytest.raises(ValueError, match="duplicate YAML key DATABASE_URL"):
+        Settings(_env_file=None)

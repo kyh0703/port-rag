@@ -1,0 +1,10 @@
+# Non-secret defaults. Put machine-specific values in config/local.yaml.
+server:
+  EMBEDDER: openai
+  HTTP_PORT: 8000
+metrics:
+  METRICS_ENABLED: true
+embedding:
+  EMBEDDING_MODEL: text-embedding-3-small
+  EMBEDDING_DIM: 1536
+  TOP_K_DEFAULT: 5
