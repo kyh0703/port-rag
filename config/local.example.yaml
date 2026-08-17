@@ -1,0 +1,16 @@
+# Copy to config/local.yaml. This file is ignored because it may contain secrets.
+database:
+  DATABASE_URL: postgresql+asyncpg://port:port@localhost:5432/port
+auth:
+  RAG_RETRIEVAL_CAPABILITY_SECRET: replace-with-at-least-32-random-bytes
+provider:
+  OPENAI_API_KEY: replace-with-your-openai-key
+server:
+  EMBEDDER: fake
+  HTTP_PORT: 8000
+metrics:
+  METRICS_ENABLED: true
+embedding:
+  EMBEDDING_MODEL: text-embedding-3-small
+  EMBEDDING_DIM: 1536
+  TOP_K_DEFAULT: 5
