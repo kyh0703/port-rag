@@ -1,7 +1,6 @@
 FROM python:3.12-slim
 
-# uv binary from the official distroless image.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN pip install --no-cache-dir uv==0.10.4
 
 WORKDIR /app
 
