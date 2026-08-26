@@ -57,3 +57,10 @@ def test_linux_torch_dependency_graph_has_no_cuda_or_triton_packages() -> None:
         )
 
     assert not forbidden & reachable
+
+
+def test_dockerfile_installs_a_pinned_uv_without_external_stage() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text()
+
+    assert "COPY --from=ghcr.io/astral-sh/uv:latest" not in dockerfile
+    assert "RUN pip install --no-cache-dir uv==0.10.4" in dockerfile
