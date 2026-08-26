@@ -43,6 +43,7 @@ def test_linux_torch_dependency_graph_has_no_cuda_or_triton_packages() -> None:
         if package["name"].startswith("nvidia-")
         or package["name"] in {"triton", "cuda-bindings", "cuda-toolkit"}
     }
+    assert not forbidden
     reachable: set[str] = set()
     pending = ["torch", "torchvision"]
     while pending:
