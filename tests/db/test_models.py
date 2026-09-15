@@ -23,6 +23,7 @@ def test_documents_table_metadata() -> None:
     assert set(documents.columns.keys()) >= {
         "id",
         "user_id",
+        "knowledge_key",
         "name",
         "mime",
         "status",
@@ -32,6 +33,7 @@ def test_documents_table_metadata() -> None:
     }
     assert documents.c.id.primary_key
     assert not documents.c.user_id.nullable
+    assert not documents.c.knowledge_key.nullable
     assert not documents.c.name.nullable
     assert not documents.c.mime.nullable
     assert not documents.c.status.nullable
@@ -53,6 +55,10 @@ def test_documents_table_metadata() -> None:
         for index in documents.indexes
     }
     assert index_columns["ix_documents_user_id"] == ["user_id"]
+    assert index_columns["uq_documents_user_knowledge_key"] == [
+        "user_id",
+        "knowledge_key",
+    ]
 
 
 def test_chunks_table_metadata() -> None:

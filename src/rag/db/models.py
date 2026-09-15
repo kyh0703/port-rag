@@ -33,7 +33,17 @@ class Document(Base):
             "status IN ('processing', 'ready', 'failed')",
             name="ck_documents_status",
         ),
+        sa.CheckConstraint(
+            "knowledge_key ~ '^[a-z][a-z0-9_]{0,127}$'",
+            name="ck_documents_knowledge_key",
+        ),
         sa.Index("ix_documents_user_id", "user_id"),
+        sa.Index(
+            "uq_documents_user_knowledge_key",
+            "user_id",
+            "knowledge_key",
+            unique=True,
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -42,6 +52,7 @@ class Document(Base):
         default=uuid.uuid4,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    knowledge_key: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     name: Mapped[str] = mapped_column(sa.Text, nullable=False)
     mime: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(

@@ -22,22 +22,24 @@ NOW = datetime(2026, 7, 9, 12, 0, tzinfo=UTC)
 class FakeDocumentRepository:
     def __init__(self) -> None:
         self.documents: dict[uuid.UUID, DocumentRecord] = {}
-        self.created: list[tuple[str, str, str]] = []
+        self.created: list[tuple[str, str, str, str]] = []
         self.fail_create = False
 
     async def create_processing_document(
         self,
         *,
         user_id: str,
+        knowledge_key: str,
         name: str,
         mime: str,
     ) -> DocumentRecord:
         if self.fail_create:
             raise RuntimeError("create failed")
-        self.created.append((user_id, name, mime))
+        self.created.append((user_id, knowledge_key, name, mime))
         document = DocumentRecord(
             id=uuid.uuid4(),
             user_id=user_id,
+            knowledge_key=knowledge_key,
             name=name,
             mime=mime,
             status=DocumentStatus.PROCESSING.value,
@@ -158,7 +160,10 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
 
     response = client.post(
         "/documents",
-        data={"userId": "0197e50a-1234-7abc-8def-0123456789ab"},
+        data={
+            "userId": "0197e50a-1234-7abc-8def-0123456789ab",
+            "knowledgeKey": "product_guide",
+        },
         files={"file": ("notes.md", b"alpha", "text/markdown")},
     )
 
@@ -171,6 +176,7 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
         "data": {
             "id": str(document_id),
             "userId": "0197e50a-1234-7abc-8def-0123456789ab",
+            "knowledgeKey": "product_guide",
             "name": "notes.md",
             "mime": "text/markdown",
             "status": "processing",
@@ -179,11 +185,33 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
             "updatedAt": "2026-07-09T12:00:00Z",
         },
     }
-    assert repository.created == [("0197e50a-1234-7abc-8def-0123456789ab", "notes.md", "text/markdown")]
+    assert repository.created == [(
+        "0197e50a-1234-7abc-8def-0123456789ab",
+        "product_guide",
+        "notes.md",
+        "text/markdown",
+    )]
     assert len(worker.jobs) == 1
     assert worker.jobs[0].document_id == document_id
     assert worker.jobs[0].path == storage.saved_paths[0]
     assert storage.saved_paths[0].read_bytes() == b"alpha"
+
+
+def test_post_rejects_an_invalid_knowledge_key(tmp_path: Path) -> None:
+    repository = FakeDocumentRepository()
+    client = build_client(repository, FakeWorker(), FakeUploadStorage(tmp_path))
+
+    response = client.post(
+        "/documents",
+        data={
+            "userId": "0197e50a-1234-7abc-8def-0123456789ab",
+            "knowledgeKey": "Bad-Key",
+        },
+        files={"file": ("notes.md", b"alpha", "text/markdown")},
+    )
+
+    assert response.status_code == 422
+    assert repository.created == []
 
 
 def test_list_documents_is_scoped_by_user_id(tmp_path: Path) -> None:
@@ -380,6 +408,7 @@ def test_reindex_rejects_processing_document_without_calling_reindexer(tmp_path:
     assert repository.documents[uuid.UUID(document["id"])] == DocumentRecord(
         id=uuid.UUID(document["id"]),
         user_id=user_id,
+        knowledge_key=document["knowledgeKey"],
         name="notes.md",
         mime="text/markdown",
         status=DocumentStatus.PROCESSING.value,
