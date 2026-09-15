@@ -8,6 +8,7 @@ from rag.config import Settings, get_settings
 
 ENV_VARS = [
     "DATABASE_URL",
+    "INTERNAL_SERVER_KEY",
     "RAG_RETRIEVAL_CAPABILITY_SECRET",
     "OPENAI_API_KEY",
     "EMBEDDER",
@@ -34,6 +35,7 @@ def make_settings(**env):
     return Settings(
         _env_file=None,
         RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
+        INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
         **env,
     )
 
@@ -51,6 +53,7 @@ def test_short_retrieval_capability_secret_is_rejected():
             DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
             EMBEDDER="fake",
             RAG_RETRIEVAL_CAPABILITY_SECRET="short",
+            INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
         )
     assert "RAG_RETRIEVAL_CAPABILITY_SECRET" in str(exc_info.value)
 
@@ -120,6 +123,7 @@ def test_get_settings_is_cached(monkeypatch):
         "RAG_RETRIEVAL_CAPABILITY_SECRET",
         "a-32-byte-minimum-retrieval-secret",
     )
+    monkeypatch.setenv("INTERNAL_SERVER_KEY", "test-only-internal-server-key-0123456789")
     first = get_settings()
     second = get_settings()
     assert first is second
@@ -134,6 +138,7 @@ database:
   DATABASE_URL: postgresql+asyncpg://yaml:y@localhost:5432/yaml
 auth:
   RAG_RETRIEVAL_CAPABILITY_SECRET: yaml-secret-that-is-long-enough-123
+  INTERNAL_SERVER_KEY: test-only-internal-server-key-0123456789
 embedding:
   EMBEDDER: fake
   EMBEDDING_DIM: 768
@@ -157,6 +162,7 @@ database:
   DATABASE_URL: postgresql+asyncpg://yaml:y@localhost:5432/yaml
 auth:
   RAG_RETRIEVAL_CAPABILITY_SECRET: yaml-secret-that-is-long-enough-123
+  INTERNAL_SERVER_KEY: test-only-internal-server-key-0123456789
 embedding:
   EMBEDDER: fake
 """

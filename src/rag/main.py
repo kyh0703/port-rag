@@ -6,6 +6,7 @@ heavy provider imports are loaded lazily inside ``serve()``.
 
 import asyncio
 from time import perf_counter
+from typing import cast
 
 import uvicorn
 import sentry_sdk
@@ -18,9 +19,16 @@ from rag.config import get_settings
 from rag.metrics import Metrics
 from rag.http.responses import ok
 from rag.http.responses import register_exception_handlers
+from rag.security.internal_server import (
+    InternalServerAuthMiddleware,
+    scrub_internal_key_fields,
+    validate_internal_server_key,
+)
 
 
-def create_app(*, metrics_enabled: bool = True) -> FastAPI:
+def create_app(*, metrics_enabled: bool = True, internal_server_key: str | None = None) -> FastAPI:
+    if internal_server_key is not None:
+        validate_internal_server_key(internal_server_key)
     app = FastAPI(title="rag")
     register_exception_handlers(app)
     metrics = Metrics()
@@ -47,6 +55,9 @@ def create_app(*, metrics_enabled: bool = True) -> FastAPI:
     async def healthz():
         return ok({"status": "ok"})
 
+    # Added last so authentication executes before metrics middleware or body parsing.
+    # The import-only app has no configured key and denies all business routes.
+    app.add_middleware(InternalServerAuthMiddleware, key=internal_server_key)
     return app
 
 
@@ -57,7 +68,10 @@ async def serve() -> None:
     """Run the internal HTTP server."""
     settings = get_settings()
     initialize_sentry(settings)
-    runtime_app = create_app(metrics_enabled=settings.METRICS_ENABLED)
+    runtime_app = create_app(
+        metrics_enabled=settings.METRICS_ENABLED,
+        internal_server_key=settings.INTERNAL_SERVER_KEY.get_secret_value(),
+    )
     engine = None
     worker = None
 
@@ -104,9 +118,7 @@ async def serve() -> None:
         repository=SearchRepository(session_factory),
         default_top_k=settings.TOP_K_DEFAULT,
     )
-    capability_verifier = RetrievalCapabilityVerifier(
-        settings.RAG_RETRIEVAL_CAPABILITY_SECRET
-    )
+    capability_verifier = RetrievalCapabilityVerifier(settings.RAG_RETRIEVAL_CAPABILITY_SECRET)
 
     runtime_app.include_router(
         create_search_router(
@@ -158,7 +170,7 @@ def scrub_sentry_event(event: dict[str, object], hint: dict[str, object]) -> dic
     if isinstance(request, dict):
         for key in ("data", "query_string", "headers"):
             request.pop(key, None)
-    return event
+    return cast(dict[str, object], scrub_internal_key_fields(event))
 
 
 def _create_embedder(settings: Settings, *, metrics: Metrics) -> object:

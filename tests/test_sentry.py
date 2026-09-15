@@ -50,11 +50,12 @@ settings = Settings(
     _env_file=None,
     DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
     RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
+    INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
     EMBEDDER="fake",
     SENTRY_DSN="https://public@example.ingest.sentry.io/1",
 )
 rag.main.initialize_sentry(settings)
-app = rag.main.create_app()
+app = rag.main.create_app(internal_server_key=settings.INTERNAL_SERVER_KEY.get_secret_value())
 
 
 @app.post("/crash")
@@ -69,7 +70,7 @@ header = f"header-{sentinel}"
 response = TestClient(app, raise_server_exceptions=False).post(
     f"/crash?{query}",
     content=body,
-    headers={"x-secret": header},
+    headers={"x-secret": header, "x-internal-server": settings.INTERNAL_SERVER_KEY.get_secret_value()},
 )
 sentry_sdk.flush()
 
@@ -88,6 +89,7 @@ event_repr = repr(event)
 assert body not in event_repr
 assert query not in event_repr
 assert header not in event_repr
+assert settings.INTERNAL_SERVER_KEY.get_secret_value() not in event_repr
 
 print(
     json.dumps(
@@ -108,6 +110,7 @@ def make_settings(*, sentry_dsn: str | None = None) -> Settings:
         _env_file=None,
         DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
         RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
+        INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
         EMBEDDER="fake",
         SENTRY_DSN=sentry_dsn,
     )

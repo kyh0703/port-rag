@@ -2,6 +2,8 @@
 database:
   DATABASE_URL: postgresql+asyncpg://port:port@localhost:5432/port
 auth:
+  # Required for standalone runs; Compose injects the shared key from its .env.
+  INTERNAL_SERVER_KEY: ""
   RAG_RETRIEVAL_CAPABILITY_SECRET: replace-with-at-least-32-random-bytes
 provider:
   OPENAI_API_KEY: replace-with-your-openai-key

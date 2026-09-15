@@ -4,13 +4,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
 import yaml
+from rag.security.internal_server import validate_internal_server_key
 
 CONFIG_ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,7 +20,9 @@ class UniqueKeyLoader(yaml.SafeLoader):
     pass
 
 
-def _construct_mapping(loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[object, object]:
+def _construct_mapping(
+    loader: UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[object, object]:
     mapping: dict[object, object] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
@@ -72,9 +75,10 @@ class CategorizedYamlSettingsSource(PydanticBaseSettingsSource):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     DATABASE_URL: str = Field(..., min_length=1)
+    INTERNAL_SERVER_KEY: SecretStr
     RAG_RETRIEVAL_CAPABILITY_SECRET: str = Field(..., min_length=32)
     OPENAI_API_KEY: str | None = None
     EMBEDDER: Literal["openai", "fake"] = "openai"
@@ -104,6 +108,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_openai_key_for_openai_embedder(self) -> "Settings":
+        validate_internal_server_key(self.INTERNAL_SERVER_KEY.get_secret_value())
         if self.EMBEDDER == "openai" and not self.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY is required when EMBEDDER=openai")
         return self
