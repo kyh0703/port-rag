@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "repository": "git@github.com:kyh0703/port-spec.git",
+  "revision": "dcf544e1c3375cc3b545ab9867d5af85317b29fc",
+  "owner": "rag",
+  "bundleSha256": "3cd0c7bf2b514b5583b2112184202986a61e72bbcf965879a95d983ea4713cbb",
+  "bootstrapSha256": "d7555caa026cdf707ff699043ed642b1dcabb4bb9753eea41fb35ce1ac8459e1",
+  "files": {
+    "20260709_0001_initial_documents_chunks.py": "1007ffabfdc3486f6cf916242705bf250d1e4a1676e99efbec6389ac38618827",
+    "20260716_0002_documents_user_id_uuid.py": "62e5bcf1e82d6bb9584be7650501d8df9bd71bda690fc6753aeed2486554f1aa",
+    "20260811_0003_knowledge_revisions.py": "dd5935c193d4e0bcf9662767a1343f2c17bc36d5b3fa4807a3c030a92b95d391",
+    "20260827_0004_document_knowledge_key_expand.py": "71cef05f4fa4bea16945642a6018895bd3cc0c5badc110e92c388a3beddb8a99",
+    "20260827_0005_document_knowledge_key_contract.py": "68559b084e6e6b7b31121bc8910630e3f524b3522a730b6545fea9cb70f4ea72"
+  }
+}

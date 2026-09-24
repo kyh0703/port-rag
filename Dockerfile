@@ -17,6 +17,10 @@ COPY src ./src
 COPY config ./config
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
+COPY migration-source.lock.json ./migration-source.lock.json
+COPY vendor/migrations.tar.gz ./vendor/migrations.tar.gz
+COPY scripts/prepare_migrations.py ./scripts/prepare_migrations.py
+RUN python3 scripts/prepare_migrations.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 

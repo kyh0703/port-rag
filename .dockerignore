@@ -6,3 +6,4 @@ __pycache__/
 *.py[cod]
 .env
 config/local.yaml
+alembic/versions/*.py

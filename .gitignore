@@ -7,3 +7,6 @@ config/local.yaml
 .mypy_cache/
 __pycache__/
 *.py[cod]
+
+# Generated from the commit-pinned port-spec migration bundle.
+/alembic/versions/*.py

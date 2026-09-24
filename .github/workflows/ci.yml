@@ -20,6 +20,7 @@ jobs:
           enable-cache: true
 
       - run: uv sync --frozen
+      - run: python3 scripts/prepare_migrations.py
       - run: uv run ruff check .
       - run: uv run pytest
 
