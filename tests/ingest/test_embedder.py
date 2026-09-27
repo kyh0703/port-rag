@@ -199,3 +199,30 @@ async def test_batch_retry_fetches_current_key_and_closes_both_http_clients(make
     await embedder.aclose()
     assert internal_client.is_closed
     assert openai_client.is_closed
+
+
+async def test_stale_fake_environment_cannot_bypass_administrator_credentials(monkeypatch):
+    from rag.config import Settings
+    from rag.main import _create_embedder
+    from rag.metrics import Metrics
+
+    monkeypatch.setenv("EMBEDDER", "fake")
+
+    async def unavailable(self, request, **kwargs):
+        return httpx.Response(503, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", unavailable)
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql+asyncpg://test:test@localhost/test",
+        INTERNAL_SERVER_KEY=INTERNAL_KEY,
+        RAG_RETRIEVAL_CAPABILITY_SECRET="test-retrieval-secret-at-least-32-bytes",
+    )
+    embedder = _create_embedder(settings, metrics=Metrics())
+    try:
+        with pytest.raises(EmbeddingError):
+            await embedder.embed_query("Do not silently return a fake vector")
+    finally:
+        close = getattr(embedder, "aclose", None)
+        if close is not None:
+            await close()

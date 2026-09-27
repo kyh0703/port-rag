@@ -8,7 +8,6 @@ auth:
 api:
   API_INTERNAL_BASE_URL: http://api:8000/api/v1
 server:
-  EMBEDDER: openai
   HTTP_PORT: 8000
 metrics:
   METRICS_ENABLED: true

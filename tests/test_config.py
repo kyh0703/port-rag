@@ -12,7 +12,6 @@ ENV_VARS = [
     "RAG_RETRIEVAL_CAPABILITY_SECRET",
     "OPENAI_API_KEY",
     "API_INTERNAL_BASE_URL",
-    "EMBEDDER",
     "HTTP_PORT",
     "EMBEDDING_MODEL",
     "EMBEDDING_DIM",
@@ -52,7 +51,6 @@ def test_short_retrieval_capability_secret_is_rejected():
         Settings(
             _env_file=None,
             DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-            EMBEDDER="fake",
             RAG_RETRIEVAL_CAPABILITY_SECRET="short",
             INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
         )
@@ -62,34 +60,9 @@ def test_short_retrieval_capability_secret_is_rejected():
 def test_sentry_dsn_is_optional():
     settings = make_settings(
         DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-        EMBEDDER="fake",
         SENTRY_DSN="https://public@example.ingest.sentry.io/1",
     )
     assert settings.SENTRY_DSN == "https://public@example.ingest.sentry.io/1"
-
-
-def test_embedder_fake_allows_missing_openai_api_key():
-    settings = make_settings(
-        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-        EMBEDDER="fake",
-    )
-    assert settings.EMBEDDER == "fake"
-
-
-def test_real_embedding_configuration_needs_no_provider_key_environment():
-    settings = make_settings(
-        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-        EMBEDDER="openai",
-    )
-    assert settings.EMBEDDER == "openai"
-
-
-def test_invalid_embedder_rejected():
-    with pytest.raises(ValidationError):
-        make_settings(
-            DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-            EMBEDDER="bogus",
-        )
 
 
 @pytest.mark.parametrize("port", [0, -1, 70000])
@@ -103,7 +76,6 @@ def test_invalid_port_rejected(port):
 
 def test_get_settings_is_cached(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://port:port@localhost:5432/port")
-    monkeypatch.setenv("EMBEDDER", "fake")
     monkeypatch.setenv(
         "RAG_RETRIEVAL_CAPABILITY_SECRET",
         "a-32-byte-minimum-retrieval-secret",
@@ -125,7 +97,6 @@ auth:
   RAG_RETRIEVAL_CAPABILITY_SECRET: yaml-secret-that-is-long-enough-123
   INTERNAL_SERVER_KEY: test-only-internal-server-key-0123456789
 embedding:
-  EMBEDDER: fake
   EMBEDDING_DIM: 768
 """
     )
@@ -134,7 +105,6 @@ embedding:
     settings = Settings(_env_file=None)
 
     assert settings.DATABASE_URL.endswith("/yaml")
-    assert settings.EMBEDDER == "fake"
     assert settings.EMBEDDING_DIM == 768
 
 
@@ -148,8 +118,6 @@ database:
 auth:
   RAG_RETRIEVAL_CAPABILITY_SECRET: yaml-secret-that-is-long-enough-123
   INTERNAL_SERVER_KEY: test-only-internal-server-key-0123456789
-embedding:
-  EMBEDDER: fake
 """
     )
     monkeypatch.setattr(config, "CONFIG_ROOT", tmp_path)

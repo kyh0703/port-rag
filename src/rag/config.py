@@ -2,7 +2,6 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import (
@@ -81,7 +80,6 @@ class Settings(BaseSettings):
     INTERNAL_SERVER_KEY: SecretStr
     RAG_RETRIEVAL_CAPABILITY_SECRET: str = Field(..., min_length=32)
     API_INTERNAL_BASE_URL: str = "http://api:8000/api/v1"
-    EMBEDDER: Literal["openai", "fake"] = "openai"
     HTTP_PORT: int = Field(8000, ge=1, le=65535)
     METRICS_ENABLED: bool = True
     EMBEDDING_MODEL: str = "text-embedding-3-small"

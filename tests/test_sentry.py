@@ -51,7 +51,6 @@ settings = Settings(
     DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
     RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
     INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
-    EMBEDDER="fake",
     SENTRY_DSN="https://public@example.ingest.sentry.io/1",
 )
 rag.main.initialize_sentry(settings)
@@ -111,7 +110,6 @@ def make_settings(*, sentry_dsn: str | None = None) -> Settings:
         DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
         RAG_RETRIEVAL_CAPABILITY_SECRET="a-32-byte-minimum-retrieval-secret",
         INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
-        EMBEDDER="fake",
         SENTRY_DSN=sentry_dsn,
     )
 

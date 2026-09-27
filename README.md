@@ -15,17 +15,10 @@ export PATH="$PWD/node_modules/.bin:$PATH"
 cp .env.example .env
 ```
 
-For isolated plumbing checks only, explicitly select fake embeddings (no semantic search):
+Register an OpenAI key in the administrator **Key Management** page (`/admin/keys`),
+then configure the trusted API address:
 
 ```bash
-EMBEDDER=fake
-```
-
-For real embeddings, register an OpenAI key in the administrator **Key Management**
-page (`/admin/keys`), then configure the trusted API address:
-
-```bash
-EMBEDDER=openai
 API_INTERNAL_BASE_URL=http://api:8000/api/v1
 ```
 
@@ -36,6 +29,8 @@ Each OpenAI request resolves the current administrator key, so key rotation need
 no RAG restart. Unavailable credentials fail explicitly, without a fake fallback.
 `OPENAI_API_KEY` is no longer read. Documents previously indexed with `fake` must
 be reindexed with real embeddings before relying on semantic search.
+The service always uses OpenAI; there is no runtime provider selector.
+Deterministic fake embedders exist only in the test suite.
 
 ## Document formats
 
@@ -84,7 +79,6 @@ remain supported.
   `postgresql+asyncpg://port:port@localhost:5432/port`
 - `INTERNAL_SERVER_KEY`: required shared API/RAG internal authentication key
 - `RAG_RETRIEVAL_CAPABILITY_SECRET`: required shared retrieval capability secret
-- `EMBEDDER`: `openai` by default; `fake` only when explicitly running isolated tests
 - `API_INTERNAL_BASE_URL`: trusted API base URL, default `http://api:8000/api/v1`
 - `HTTP_PORT`: default `8000`
 - `EMBEDDING_MODEL`: default `text-embedding-3-small`
@@ -95,22 +89,22 @@ remain supported.
 ## Checks
 
 ```bash
-SMOKE_EMBEDDER=fake uv run python scripts/smoke.py
+uv run python scripts/smoke.py
 uv run pytest
 uv run ruff check .
 ```
 
 `scripts/smoke.py` creates a uniquely named, temporary Compose project and removes
-only that project's containers, network and database volume afterward. Real mode
-is the default: privately export the API's `INTERNAL_SERVER_KEY` and set
+only that project's containers, network and database volume afterward. It always
+uses real embeddings: privately export the API's `INTERNAL_SERVER_KEY` and set
 `API_INTERNAL_BASE_URL` to an API reachable from the smoke container (on macOS,
-for example `http://host.docker.internal:8000/api/v1`). It never infers fake mode
-from a missing provider key. For an isolated fake check with alternate ports:
+for example `http://host.docker.internal:8000/api/v1`). Unit tests remain isolated
+from provider services. For a real smoke check with alternate ports:
 
 ```bash
 RAG_SMOKE_POSTGRES_PORT=55435 \
 RAG_SMOKE_HTTP_PORT=18082 \
 RAG_SMOKE_HTTP_BASE=http://localhost:18082 \
-SMOKE_EMBEDDER=fake \
+API_INTERNAL_BASE_URL=http://host.docker.internal:8000/api/v1 \
 uv run python scripts/smoke.py
 ```

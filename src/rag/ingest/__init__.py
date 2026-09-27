@@ -1,7 +1,6 @@
 """Document ingest pipeline components."""
 
 from rag.ingest.embedder import OpenAIEmbedder
-from rag.ingest.embedder import StaticFakeEmbedder
 from rag.ingest.chunker import HybridDoclingChunker
 from rag.ingest.pipeline import IngestPipeline
 from rag.ingest.parser import DoclingParser
@@ -21,5 +20,4 @@ __all__ = [
     "OpenAIEmbedder",
     "ParsedDocument",
     "SqlAlchemyIngestStore",
-    "StaticFakeEmbedder",
 ]

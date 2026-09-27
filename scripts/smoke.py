@@ -2,8 +2,7 @@
 
 The script starts docker compose with a temporary override, uploads a small
 Markdown document, waits for ingest to become ready, and performs an HTTP search.
-Real mode requires a reachable API with an administrator OpenAI credential.
-Set SMOKE_EMBEDDER=fake explicitly only for isolated tests without that API.
+Requires a reachable API with an administrator OpenAI credential.
 """
 
 from __future__ import annotations
@@ -54,10 +53,7 @@ def main() -> None:
 
 
 def _ensure_compose() -> str:
-    embedder = _embedder_mode()
     internal_server_key = os.environ.get("INTERNAL_SERVER_KEY", "")
-    if not internal_server_key and embedder == "fake":
-        internal_server_key = secrets.token_urlsafe(32)
     validate_internal_server_key(internal_server_key)
     compose_env = {
         **os.environ,
@@ -65,20 +61,19 @@ def _ensure_compose() -> str:
         "RAG_RETRIEVAL_CAPABILITY_SECRET": secrets.token_urlsafe(32),
     }
     override = textwrap.dedent(
-        f"""
+        """
         services:
           postgres:
             ports: !override
-              - "${{RAG_SMOKE_POSTGRES_PORT:-5432}}:5432"
+              - "${RAG_SMOKE_POSTGRES_PORT:-5432}:5432"
           rag:
             environment:
               DATABASE_URL: postgresql+asyncpg://port:port@postgres:5432/port
-              EMBEDDER: {embedder}
-              API_INTERNAL_BASE_URL: "${{API_INTERNAL_BASE_URL:-http://api:8000/api/v1}}"
-              INTERNAL_SERVER_KEY: "${{INTERNAL_SERVER_KEY}}"
-              RAG_RETRIEVAL_CAPABILITY_SECRET: "${{RAG_RETRIEVAL_CAPABILITY_SECRET}}"
+              API_INTERNAL_BASE_URL: "${API_INTERNAL_BASE_URL:-http://api:8000/api/v1}"
+              INTERNAL_SERVER_KEY: "${INTERNAL_SERVER_KEY}"
+              RAG_RETRIEVAL_CAPABILITY_SECRET: "${RAG_RETRIEVAL_CAPABILITY_SECRET}"
             ports: !override
-              - "${{RAG_SMOKE_HTTP_PORT:-8000}}:8000"
+              - "${RAG_SMOKE_HTTP_PORT:-8000}:8000"
         """
     )
 
@@ -98,13 +93,6 @@ def _ensure_compose() -> str:
     finally:
         override_path.unlink(missing_ok=True)
     return internal_server_key
-
-
-def _embedder_mode() -> str:
-    configured = os.environ.get("SMOKE_EMBEDDER", "openai")
-    if configured not in {"fake", "openai"}:
-        raise ValueError("SMOKE_EMBEDDER must be openai or fake")
-    return configured
 
 
 def _run_migrations() -> None:

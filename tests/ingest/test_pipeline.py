@@ -12,7 +12,7 @@ from rag.ingest import IngestChunk
 from rag.ingest import IngestJob
 from rag.ingest import IngestPipeline
 from rag.ingest import ParsedDocument
-from rag.ingest import StaticFakeEmbedder
+from tests.fakes import StaticFakeEmbedder
 from rag.ingest.types import ReindexFailedError
 from rag.ingest.embedder import InternalEmbeddingCredentialProvider, OpenAIEmbedder
 

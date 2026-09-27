@@ -150,8 +150,7 @@ async def serve() -> None:
                 await worker.stop()
         finally:
             try:
-                if settings.EMBEDDER == "openai":
-                    await embedder.aclose()
+                await embedder.aclose()
             finally:
                 if engine is not None:
                     await engine.dispose()
@@ -180,11 +179,6 @@ def scrub_sentry_event(event: dict[str, object], hint: dict[str, object]) -> dic
 
 
 def _create_embedder(settings: Settings, *, metrics: Metrics) -> object:
-    if settings.EMBEDDER == "fake":
-        from rag.ingest.embedder import StaticFakeEmbedder
-
-        return StaticFakeEmbedder(dimensions=settings.EMBEDDING_DIM)
-
     from rag.ingest.embedder import OpenAIEmbedder
     from rag.ingest.embedder import InternalEmbeddingCredentialProvider
 

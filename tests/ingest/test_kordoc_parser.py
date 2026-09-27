@@ -10,7 +10,7 @@ import pytest
 
 from rag.ingest.chunker import HybridDoclingChunker
 from rag.ingest.parser import DoclingParser
-from rag.ingest.embedder import StaticFakeEmbedder
+from tests.fakes import StaticFakeEmbedder
 from rag.ingest.pipeline import IngestPipeline
 from rag.ingest.types import IngestJob
 from tests.ingest.test_pipeline import MemoryStore

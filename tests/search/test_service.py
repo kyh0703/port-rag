@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rag.ingest.embedder import StaticFakeEmbedder
+from tests.fakes import StaticFakeEmbedder
 from rag.search.service import SearchService
 from rag.search.types import SearchHit
 

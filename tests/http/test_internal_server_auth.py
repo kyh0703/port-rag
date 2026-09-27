@@ -120,7 +120,6 @@ def test_internal_key_is_required_and_hidden_in_settings_errors():
         "_env_file": None,
         "DATABASE_URL": "postgresql+asyncpg://port:port@localhost:5432/port",
         "RAG_RETRIEVAL_CAPABILITY_SECRET": "a-32-byte-minimum-retrieval-secret",
-        "EMBEDDER": "fake",
     }
     with pytest.raises(ValidationError, match="INTERNAL_SERVER_KEY"):
         Settings(**base)
