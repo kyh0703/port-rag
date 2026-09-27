@@ -145,10 +145,16 @@ async def serve() -> None:
         # uvicorn installs signal handlers and returns on SIGINT/SIGTERM.
         await http_server.serve()
     finally:
-        if worker is not None:
-            await worker.stop()
-        if engine is not None:
-            await engine.dispose()
+        try:
+            if worker is not None:
+                await worker.stop()
+        finally:
+            try:
+                if settings.EMBEDDER == "openai":
+                    await embedder.aclose()
+            finally:
+                if engine is not None:
+                    await engine.dispose()
 
 
 def initialize_sentry(settings: Settings) -> None:
@@ -180,9 +186,13 @@ def _create_embedder(settings: Settings, *, metrics: Metrics) -> object:
         return StaticFakeEmbedder(dimensions=settings.EMBEDDING_DIM)
 
     from rag.ingest.embedder import OpenAIEmbedder
+    from rag.ingest.embedder import InternalEmbeddingCredentialProvider
 
     return OpenAIEmbedder(
-        api_key=settings.OPENAI_API_KEY or "",
+        credential_provider=InternalEmbeddingCredentialProvider(
+            base_url=settings.API_INTERNAL_BASE_URL,
+            internal_server_key=settings.INTERNAL_SERVER_KEY.get_secret_value(),
+        ),
         model=settings.EMBEDDING_MODEL,
         metrics=metrics,
     )

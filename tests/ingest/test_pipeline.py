@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
 import pytest
 
 from rag.db.models import DocumentStatus
@@ -13,6 +14,7 @@ from rag.ingest import IngestPipeline
 from rag.ingest import ParsedDocument
 from rag.ingest import StaticFakeEmbedder
 from rag.ingest.types import ReindexFailedError
+from rag.ingest.embedder import InternalEmbeddingCredentialProvider, OpenAIEmbedder
 
 
 @dataclass
@@ -273,3 +275,46 @@ async def test_reindex_failure_marks_document_failed_and_raises(
 
     assert store.statuses[document_id] == DocumentStatus.FAILED.value
     assert expected_error in store.errors[document_id]
+
+
+@pytest.mark.asyncio
+async def test_upstream_credential_echo_is_not_persisted_in_ingest_error(tmp_path: Path) -> None:
+    secret = "sk-private-admin-credential"
+    internal_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"data": {"provider": "openai", "apiKey": secret}}
+            )
+        )
+    )
+    openai_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                401, json={"error": {"message": f"Invalid API key: {secret}"}}
+            )
+        )
+    )
+    embedder = OpenAIEmbedder(
+        credential_provider=InternalEmbeddingCredentialProvider(
+            base_url="http://api.test/api/v1",
+            internal_server_key="test-only-internal-server-key-0123456789",
+            client=internal_client,
+        ),
+        http_client=openai_client,
+        max_attempts=1,
+    )
+    path = tmp_path / "document.txt"
+    path.write_text("private document")
+    document_id = uuid.uuid4()
+    store = MemoryStore()
+    pipeline = IngestPipeline(
+        parser=TextParser(), chunker=SplitChunker(), embedder=embedder, store=store
+    )
+    try:
+        await pipeline.ingest(IngestJob(document_id=document_id, path=path))
+    finally:
+        await embedder.aclose()
+    assert store.statuses[document_id] == DocumentStatus.FAILED.value
+    assert document_id not in store.chunks
+    assert secret not in store.errors[document_id]
+    assert "Invalid API key" not in store.errors[document_id]

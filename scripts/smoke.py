@@ -2,38 +2,49 @@
 
 The script starts docker compose with a temporary override, uploads a small
 Markdown document, waits for ingest to become ready, and performs an HTTP search.
+Real mode requires a reachable API with an administrator OpenAI credential.
+Set SMOKE_EMBEDDER=fake explicitly only for isolated tests without that API.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import subprocess
 import tempfile
 import textwrap
 import time
+import uuid
 from pathlib import Path
 
 import httpx
 from alembic import command
 from alembic.config import Config
 
+from rag.security.internal_server import validate_internal_server_key
+
 
 ROOT = Path(__file__).resolve().parents[1]
-USER_ID = "smoke-user"
+USER_ID = str(uuid.uuid4())
+COMPOSE_PROJECT = f"rag-smoke-{uuid.uuid4().hex[:12]}"
 DOCUMENT_TEXT = "Port smoke document. The retrieval keyword is copper-pineapple."
 
 
 def main() -> None:
     try:
-        _ensure_compose()
+        internal_server_key = _ensure_compose()
         _run_migrations()
-        asyncio.run(_roundtrip())
+        asyncio.run(_roundtrip(internal_server_key))
     finally:
         _run(
             [
                 "docker",
                 "compose",
+                "-p",
+                COMPOSE_PROJECT,
+                "-f",
+                "docker-compose.yml",
                 "down",
                 "-v",
                 "--remove-orphans",
@@ -42,9 +53,17 @@ def main() -> None:
         )
 
 
-def _ensure_compose() -> None:
+def _ensure_compose() -> str:
     embedder = _embedder_mode()
-    api_key = os.environ.get("OPENAI_API_KEY", "") if embedder == "openai" else ""
+    internal_server_key = os.environ.get("INTERNAL_SERVER_KEY", "")
+    if not internal_server_key and embedder == "fake":
+        internal_server_key = secrets.token_urlsafe(32)
+    validate_internal_server_key(internal_server_key)
+    compose_env = {
+        **os.environ,
+        "INTERNAL_SERVER_KEY": internal_server_key,
+        "RAG_RETRIEVAL_CAPABILITY_SECRET": secrets.token_urlsafe(32),
+    }
     override = textwrap.dedent(
         f"""
         services:
@@ -55,7 +74,9 @@ def _ensure_compose() -> None:
             environment:
               DATABASE_URL: postgresql+asyncpg://port:port@postgres:5432/port
               EMBEDDER: {embedder}
-              OPENAI_API_KEY: "{api_key}"
+              API_INTERNAL_BASE_URL: "${{API_INTERNAL_BASE_URL:-http://api:8000/api/v1}}"
+              INTERNAL_SERVER_KEY: "${{INTERNAL_SERVER_KEY}}"
+              RAG_RETRIEVAL_CAPABILITY_SECRET: "${{RAG_RETRIEVAL_CAPABILITY_SECRET}}"
             ports: !override
               - "${{RAG_SMOKE_HTTP_PORT:-8000}}:8000"
         """
@@ -66,20 +87,24 @@ def _ensure_compose() -> None:
         override_path = Path(file.name)
 
     try:
-        _run(["docker", "compose", "-f", "docker-compose.yml", "-f", str(override_path), "up", "-d", "--build"])
+        _run(
+            [
+                "docker", "compose", "-p", COMPOSE_PROJECT,
+                "-f", "docker-compose.yml", "-f", str(override_path),
+                "up", "-d", "--build",
+            ],
+            env=compose_env,
+        )
     finally:
         override_path.unlink(missing_ok=True)
+    return internal_server_key
 
 
 def _embedder_mode() -> str:
-    configured = os.environ.get("SMOKE_EMBEDDER")
-    if configured in {"fake", "openai"}:
-        return configured
-
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key and not key.startswith("sk-your-"):
-        return "openai"
-    return "fake"
+    configured = os.environ.get("SMOKE_EMBEDDER", "openai")
+    if configured not in {"fake", "openai"}:
+        raise ValueError("SMOKE_EMBEDDER must be openai or fake")
+    return configured
 
 
 def _run_migrations() -> None:
@@ -90,13 +115,25 @@ def _run_migrations() -> None:
     )
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(config, "head")
+    previous_url = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = database_url
+    try:
+        command.upgrade(config, "head")
+    finally:
+        if previous_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous_url
 
 
-async def _roundtrip() -> None:
+async def _roundtrip(internal_server_key: str) -> None:
     http_base = os.environ.get("RAG_SMOKE_HTTP_BASE", "http://localhost:8000")
 
-    async with httpx.AsyncClient(base_url=http_base, timeout=30.0) as client:
+    async with httpx.AsyncClient(
+        base_url=http_base,
+        headers={"X-Internal-Server": internal_server_key},
+        timeout=30.0,
+    ) as client:
         await _wait_until_ready(client)
         document_id = await _upload(client)
         await _wait_for_document_ready(client, document_id)
@@ -163,9 +200,11 @@ async def _search(client: httpx.AsyncClient) -> tuple[float, int]:
     return latency_ms, len(results)
 
 
-def _run(command_line: list[str], *, check: bool = True) -> None:
+def _run(
+    command_line: list[str], *, check: bool = True, env: dict[str, str] | None = None
+) -> None:
     print("+", " ".join(command_line))
-    subprocess.run(command_line, cwd=ROOT, check=check)
+    subprocess.run(command_line, cwd=ROOT, check=check, env=env)
 
 
 if __name__ == "__main__":

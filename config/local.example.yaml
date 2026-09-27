@@ -5,10 +5,10 @@ auth:
   # Required for standalone runs; Compose injects the shared key from its .env.
   INTERNAL_SERVER_KEY: ""
   RAG_RETRIEVAL_CAPABILITY_SECRET: replace-with-at-least-32-random-bytes
-provider:
-  OPENAI_API_KEY: replace-with-your-openai-key
+api:
+  API_INTERNAL_BASE_URL: http://api:8000/api/v1
 server:
-  EMBEDDER: fake
+  EMBEDDER: openai
   HTTP_PORT: 8000
 metrics:
   METRICS_ENABLED: true

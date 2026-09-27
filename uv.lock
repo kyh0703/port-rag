@@ -1765,6 +1765,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "docling" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "openai" },
     { name = "pgvector" },
     { name = "prometheus-client" },
@@ -1782,7 +1783,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -1794,7 +1794,8 @@ requires-dist = [
     { name = "asyncpg" },
     { name = "docling" },
     { name = "fastapi" },
-    { name = "openai" },
+    { name = "httpx" },
+    { name = "openai", specifier = ">=2.44.0" },
     { name = "pgvector" },
     { name = "prometheus-client" },
     { name = "pydantic-settings" },
@@ -1811,7 +1812,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },

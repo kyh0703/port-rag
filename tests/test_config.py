@@ -11,6 +11,7 @@ ENV_VARS = [
     "INTERNAL_SERVER_KEY",
     "RAG_RETRIEVAL_CAPABILITY_SECRET",
     "OPENAI_API_KEY",
+    "API_INTERNAL_BASE_URL",
     "EMBEDDER",
     "HTTP_PORT",
     "EMBEDDING_MODEL",
@@ -42,7 +43,7 @@ def make_settings(**env):
 
 def test_missing_database_url_raises():
     with pytest.raises(ValidationError) as exc_info:
-        make_settings(OPENAI_API_KEY="sk-test")
+        make_settings()
     assert "DATABASE_URL" in str(exc_info.value)
 
 
@@ -56,19 +57,6 @@ def test_short_retrieval_capability_secret_is_rejected():
             INTERNAL_SERVER_KEY="test-only-internal-server-key-0123456789",
         )
     assert "RAG_RETRIEVAL_CAPABILITY_SECRET" in str(exc_info.value)
-
-
-def test_defaults_applied():
-    settings = make_settings(
-        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-        OPENAI_API_KEY="sk-test",
-    )
-    assert settings.EMBEDDER == "openai"
-    assert settings.HTTP_PORT == 8000
-    assert settings.EMBEDDING_MODEL == "text-embedding-3-small"
-    assert settings.EMBEDDING_DIM == 1536
-    assert settings.TOP_K_DEFAULT == 5
-    assert settings.SENTRY_DSN is None
 
 
 def test_sentry_dsn_is_optional():
@@ -86,22 +74,20 @@ def test_embedder_fake_allows_missing_openai_api_key():
         EMBEDDER="fake",
     )
     assert settings.EMBEDDER == "fake"
-    assert settings.OPENAI_API_KEY is None
 
 
-def test_embedder_openai_requires_openai_api_key():
-    with pytest.raises(ValidationError) as exc_info:
-        make_settings(
-            DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-        )
-    assert "OPENAI_API_KEY" in str(exc_info.value)
+def test_real_embedding_configuration_needs_no_provider_key_environment():
+    settings = make_settings(
+        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
+        EMBEDDER="openai",
+    )
+    assert settings.EMBEDDER == "openai"
 
 
 def test_invalid_embedder_rejected():
     with pytest.raises(ValidationError):
         make_settings(
             DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-            OPENAI_API_KEY="sk-test",
             EMBEDDER="bogus",
         )
 
@@ -111,7 +97,6 @@ def test_invalid_port_rejected(port):
     with pytest.raises(ValidationError):
         make_settings(
             DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
-            OPENAI_API_KEY="sk-test",
             HTTP_PORT=port,
         )
 

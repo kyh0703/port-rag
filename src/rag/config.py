@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(..., min_length=1)
     INTERNAL_SERVER_KEY: SecretStr
     RAG_RETRIEVAL_CAPABILITY_SECRET: str = Field(..., min_length=32)
-    OPENAI_API_KEY: str | None = None
+    API_INTERNAL_BASE_URL: str = "http://api:8000/api/v1"
     EMBEDDER: Literal["openai", "fake"] = "openai"
     HTTP_PORT: int = Field(8000, ge=1, le=65535)
     METRICS_ENABLED: bool = True
@@ -107,10 +107,8 @@ class Settings(BaseSettings):
         )
 
     @model_validator(mode="after")
-    def require_openai_key_for_openai_embedder(self) -> "Settings":
+    def validate_internal_authentication(self) -> "Settings":
         validate_internal_server_key(self.INTERNAL_SERVER_KEY.get_secret_value())
-        if self.EMBEDDER == "openai" and not self.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required when EMBEDDER=openai")
         return self
 
 

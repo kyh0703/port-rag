@@ -13,7 +13,8 @@ dependencies = [
     "asyncpg",
     "alembic",
     "pgvector",
-    "openai",
+    "openai>=2.44.0",
+    "httpx",
     "python-multipart",
     "pydantic-settings",
     "pyyaml",
@@ -26,7 +27,6 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
-    "httpx",
 ]
 
 [build-system]
