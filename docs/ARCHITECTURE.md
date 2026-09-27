@@ -27,6 +27,14 @@
     검색 쿼리 임베딩 모두 이 모델 하나로 통일한다(차원/모델 불일치 금지).
   - Docling: PDF/docx/pptx/xlsx/md/txt → 구조화 마크다운 파싱. 서비스
     프로세스 내 라이브러리로 사용한다(v1은 별도 파싱 서비스 없음).
+  - kordoc 4.15.6 (MIT): HWP/HWPX만 Node.js CLI 서브프로세스로 JSON 파싱한다.
+    구조화 블록을 Docling 문서 모델로 직접 옮겨 기존 HybridChunker에 전달한다.
+    Markdown 재파싱 없이 본문·셀 값·병합 범위를 보존하며, 중첩표는 부모 셀의
+    텍스트로 평탄화한다. `PARTIAL_PARSE` 등 본문 손실·손상 복구 경고는 인제스트를
+    실패시킨다. 의도적인 숨은 글 제외·이미지 생략·쪽 경계 근사는 허용한다.
+    셸을 사용하지 않고 120초 제한을 적용한다. 파서와 전이 의존성은 npm lock으로
+    고정하며 컨테이너 빌드 시 설치한다. 이미지 OCR·암호 입력·원본 쪽 번호 인용은
+    이 경로에서 제공하지 않는다.
 - 데이터 경계:
   - rag 전용 PostgreSQL(+pgvector) 인스턴스. api DB와 공유하지 않는다 —
     벡터 인덱스 부하를 격리하고 스키마 수명주기를 독립시킨다.
@@ -53,4 +61,4 @@
     확인되면 큐/워커 분리는 다음 버전에서 결정한다.
 - 작동 제한:
   - 스택: Python 3.12+, FastAPI(내부 HTTP), Docling, SQLAlchemy(async) +
-    pgvector.
+    pgvector. HWP/HWPX 변환에는 Node.js 22+와 kordoc이 필요하다.

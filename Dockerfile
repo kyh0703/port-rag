@@ -1,4 +1,14 @@
-FROM python:3.12-slim
+FROM node:22-bookworm-slim AS document-tools
+WORKDIR /opt/kordoc
+COPY package.json package-lock.json ./
+RUN npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+
+FROM python:3.12-slim-bookworm
+
+# HWP/HWPX only: no OCR models, browser, npm, or network installs at runtime.
+COPY --from=document-tools /usr/local/bin/node /usr/local/bin/node
+COPY --from=document-tools /opt/kordoc /opt/kordoc
+ENV PATH="/opt/kordoc/node_modules/.bin:${PATH}"
 
 RUN pip install --no-cache-dir uv==0.10.4
 
