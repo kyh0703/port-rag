@@ -15,18 +15,27 @@ export PATH="$PWD/node_modules/.bin:$PATH"
 cp .env.example .env
 ```
 
-For local smoke checks without a real OpenAI key, set:
+For isolated plumbing checks only, explicitly select fake embeddings (no semantic search):
 
 ```bash
 EMBEDDER=fake
 ```
 
-With a real key, use:
+For real embeddings, register an OpenAI key in the administrator **Key Management**
+page (`/admin/keys`), then configure the trusted API address:
 
 ```bash
 EMBEDDER=openai
-OPENAI_API_KEY=sk-...
+API_INTERNAL_BASE_URL=http://api:8000/api/v1
 ```
+
+RAG obtains the current key from `GET /api/v1/internal/rag/embedding-credential`
+using the shared `INTERNAL_SERVER_KEY`. The API owns encrypted credential storage
+and decryption; RAG needs no provider key or decryption secret in its environment.
+Each OpenAI request resolves the current administrator key, so key rotation needs
+no RAG restart. Unavailable credentials fail explicitly, without a fake fallback.
+`OPENAI_API_KEY` is no longer read. Documents previously indexed with `fake` must
+be reindexed with real embeddings before relying on semantic search.
 
 ## Document formats
 
@@ -65,7 +74,7 @@ it has no user data.
 
 Non-secret defaults are tracked in `config/default.yaml`. Copy
 `config/local.example.yaml` to the gitignored `config/local.yaml` for local
-database and provider credentials. YAML category names are organizational only;
+database and internal-service settings. YAML category names are organizational only;
 environment variables override YAML and existing `.env`/production injection
 remain supported.
 
@@ -73,8 +82,10 @@ remain supported.
 
 - `DATABASE_URL`: async SQLAlchemy URL, for example
   `postgresql+asyncpg://port:port@localhost:5432/port`
-- `EMBEDDER`: `openai` or `fake`
-- `OPENAI_API_KEY`: required only when `EMBEDDER=openai`
+- `INTERNAL_SERVER_KEY`: required shared API/RAG internal authentication key
+- `RAG_RETRIEVAL_CAPABILITY_SECRET`: required shared retrieval capability secret
+- `EMBEDDER`: `openai` by default; `fake` only when explicitly running isolated tests
+- `API_INTERNAL_BASE_URL`: trusted API base URL, default `http://api:8000/api/v1`
 - `HTTP_PORT`: default `8000`
 - `EMBEDDING_MODEL`: default `text-embedding-3-small`
 - `EMBEDDING_DIM`: default `1536`
@@ -84,16 +95,17 @@ remain supported.
 ## Checks
 
 ```bash
-docker compose up -d
-uv run alembic upgrade head
-uv run python scripts/smoke.py
+SMOKE_EMBEDDER=fake uv run python scripts/smoke.py
 uv run pytest
 uv run ruff check .
 ```
 
-`scripts/smoke.py` also selects `EMBEDDER=fake` when `OPENAI_API_KEY` is not set.
-If host port `5432` is already occupied, run the smoke check with alternate
-ports:
+`scripts/smoke.py` creates a uniquely named, temporary Compose project and removes
+only that project's containers, network and database volume afterward. Real mode
+is the default: privately export the API's `INTERNAL_SERVER_KEY` and set
+`API_INTERNAL_BASE_URL` to an API reachable from the smoke container (on macOS,
+for example `http://host.docker.internal:8000/api/v1`). It never infers fake mode
+from a missing provider key. For an isolated fake check with alternate ports:
 
 ```bash
 RAG_SMOKE_POSTGRES_PORT=55435 \

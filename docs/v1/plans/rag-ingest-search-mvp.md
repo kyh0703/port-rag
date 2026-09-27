@@ -49,10 +49,11 @@
 - [x] Complete
 - Goal: reg Python 서비스 스캐폴딩 — pyproject.toml(uv, Python 3.12,
   fastapi/docling/sqlalchemy[asyncio]/alembic/pgvector/openai/pytest/ruff),
-  `src/reg/config.py`(환경변수 검증: DATABASE_URL, OPENAI_API_KEY,
+  `src/reg/config.py`(환경변수 검증: DATABASE_URL, INTERNAL_SERVER_KEY, API_INTERNAL_BASE_URL,
   HTTP_PORT), `src/reg/main.py`(FastAPI HTTP 기동 뼈대, healthz),
   Dockerfile, docker-compose.yml(pgvector 포함),
   .env.example.
+  현재 제공자 키는 관리자 DB에서 내부 인증 API로 조회하며, RAG 환경변수에 저장하지 않는다.
 - Depends on:
   - none
 - Write Scope:
