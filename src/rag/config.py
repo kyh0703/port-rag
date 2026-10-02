@@ -86,6 +86,8 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = 1536
     TOP_K_DEFAULT: int = 5
     SENTRY_DSN: str | None = None
+    RAG_UPLOAD_STAGING_ROOT: Path | None = None
+    RAG_CLEAN_LEGACY_UPLOADS_ON_START: bool = False
 
     @classmethod
     def settings_customise_sources(

@@ -8,6 +8,7 @@ from rag.config import Settings
 from rag.main import create_app, scrub_sentry_event
 from rag.http.search import create_search_router
 from rag.security.retrieval_capability import InvalidRetrievalCapability
+from tests.fakes import MemoryOwnerAdmission
 
 TEST_KEY = "test-only-internal-server-key-0123456789"
 
@@ -155,7 +156,9 @@ def test_service_key_does_not_replace_revision_capability():
             return []
 
     app = create_app(internal_server_key=TEST_KEY)
-    app.include_router(create_search_router(service=Search(), capability_verifier=Capability()))
+    app.include_router(create_search_router(
+        service=Search(), capability_verifier=Capability(), owner_access=MemoryOwnerAdmission(),
+    ))
     client = TestClient(app)
     url = "/knowledge-revisions/00000000-0000-0000-0000-000000000000/search"
     assert (

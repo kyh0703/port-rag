@@ -18,6 +18,7 @@ from rag.db.models import DocumentChunk
 from rag.db.models import DocumentStatus
 from rag.db.models import KnowledgeRevision
 from rag.db.models import KnowledgeRevisionChunk
+from rag.security.owner_erasure import lock_active_owner
 
 
 class SessionFactory(Protocol):
@@ -70,6 +71,7 @@ class KnowledgeRevisionRepository:
             statement = statement.where(Document.id.in_(selected_ids))
 
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             rows = (await session.execute(statement)).mappings().all()
             found_ids = {row["document_id"] for row in rows}
             if selected_ids is not None and found_ids != selected_ids:
@@ -86,6 +88,7 @@ class KnowledgeRevisionRepository:
                     created_at=created_at,
                 )
             )
+            await session.flush()
             session.add_all(
                 [
                     KnowledgeRevisionChunk(
@@ -100,7 +103,6 @@ class KnowledgeRevisionRepository:
                     for row in rows
                 ]
             )
-            await session.flush()
             await session.commit()
 
         return KnowledgeRevisionRecord(
@@ -132,6 +134,7 @@ class KnowledgeRevisionRepository:
             .group_by(KnowledgeRevision.id)
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             row = (await session.execute(statement)).one_or_none()
         if row is None:
             return None
@@ -163,6 +166,7 @@ class KnowledgeRevisionRepository:
             )
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             rows = (await session.execute(statement)).mappings().all()
         return [
             KnowledgeRevisionRecord(

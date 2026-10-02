@@ -17,6 +17,7 @@ from rag.db.models import DocumentStatus
 from rag.db.models import KnowledgeRevisionChunk
 from rag.db.models import KnowledgeRevision
 from rag.search.types import SearchHit
+from rag.security.owner_erasure import lock_active_owner
 
 
 class SessionFactory(Protocol):
@@ -56,6 +57,7 @@ class SearchRepository:
         )
 
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             result = await session.execute(statement)
             rows = result.mappings().all()
 
@@ -104,6 +106,7 @@ class SearchRepository:
         )
 
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             result = await session.execute(statement)
             rows = result.mappings().all()
 

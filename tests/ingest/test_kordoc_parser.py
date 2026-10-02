@@ -11,6 +11,7 @@ import pytest
 from rag.ingest.chunker import HybridDoclingChunker
 from rag.ingest.parser import DoclingParser
 from tests.fakes import StaticFakeEmbedder
+from tests.fakes import MemoryOwnerAdmission
 from rag.ingest.pipeline import IngestPipeline
 from rag.ingest.types import IngestJob
 from tests.ingest.test_pipeline import MemoryStore
@@ -154,9 +155,12 @@ async def test_partial_hwpx_ingest_fails_without_publishing_chunks(tmp_path: Pat
         chunker=HybridDoclingChunker(),
         embedder=StaticFakeEmbedder(dimensions=3),
         store=store,
+        owner_access=MemoryOwnerAdmission(),
     )
 
-    await pipeline.ingest(IngestJob(document_id=document_id, path=path))
+    await pipeline.ingest(IngestJob(
+        document_id=document_id, path=path, user_id="0197e50a-1234-7abc-8def-0123456789ab",
+    ))
 
     assert store.statuses[document_id] == "failed"
     assert "PARTIAL_PARSE" in store.errors[document_id]

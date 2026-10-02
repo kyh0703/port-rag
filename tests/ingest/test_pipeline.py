@@ -13,6 +13,7 @@ from rag.ingest import IngestJob
 from rag.ingest import IngestPipeline
 from rag.ingest import ParsedDocument
 from tests.fakes import StaticFakeEmbedder
+from tests.fakes import MemoryOwnerAdmission
 from rag.ingest.types import ReindexFailedError
 from rag.ingest.embedder import InternalEmbeddingCredentialProvider, OpenAIEmbedder
 
@@ -134,9 +135,12 @@ async def test_successful_md_ingest_stores_chunks_and_marks_ready(tmp_path: Path
         chunker=SplitChunker(),
         embedder=embedder,
         store=store,
+        owner_access=MemoryOwnerAdmission(),
     )
 
-    await pipeline.ingest(IngestJob(document_id=document_id, path=path))
+    await pipeline.ingest(IngestJob(
+        document_id=document_id, path=path, user_id="0197e50a-1234-7abc-8def-0123456789ab",
+    ))
 
     assert store.statuses[document_id] == DocumentStatus.READY.value
     assert not path.exists()
@@ -158,9 +162,12 @@ async def test_broken_parser_marks_document_failed(tmp_path: Path) -> None:
         chunker=SplitChunker(),
         embedder=StaticFakeEmbedder(dimensions=3),
         store=store,
+        owner_access=MemoryOwnerAdmission(),
     )
 
-    await pipeline.ingest(IngestJob(document_id=document_id, path=path))
+    await pipeline.ingest(IngestJob(
+        document_id=document_id, path=path, user_id="0197e50a-1234-7abc-8def-0123456789ab",
+    ))
 
     assert store.statuses[document_id] == DocumentStatus.FAILED.value
     assert not path.exists()
@@ -179,9 +186,12 @@ async def test_chunk_metadata_and_seq_are_preserved(tmp_path: Path) -> None:
         chunker=SplitChunker(),
         embedder=StaticFakeEmbedder(dimensions=2),
         store=store,
+        owner_access=MemoryOwnerAdmission(),
     )
 
-    await pipeline.ingest(IngestJob(document_id=document_id, path=path))
+    await pipeline.ingest(IngestJob(
+        document_id=document_id, path=path, user_id="0197e50a-1234-7abc-8def-0123456789ab",
+    ))
 
     assert [(chunk.seq, chunk.metadata) for chunk in store.chunks[document_id]] == [
         (0, {"source": "source.txt", "line": 1}),
@@ -216,6 +226,7 @@ async def test_reindex_preserves_saved_chunk_text_and_metadata(tmp_path: Path) -
         chunker=SplitChunker(),
         embedder=StaticFakeEmbedder(dimensions=3),
         store=store,
+        owner_access=MemoryOwnerAdmission(),
     )
 
     reindexed = await pipeline.reindex(document_id=document_id, user_id=user_id)
@@ -268,6 +279,7 @@ async def test_reindex_failure_marks_document_failed_and_raises(
         chunker=EmptyChunker(),
         embedder=embedder,
         store=store,
+        owner_access=MemoryOwnerAdmission(),
     )
 
     with pytest.raises(ReindexFailedError):
@@ -308,10 +320,13 @@ async def test_upstream_credential_echo_is_not_persisted_in_ingest_error(tmp_pat
     document_id = uuid.uuid4()
     store = MemoryStore()
     pipeline = IngestPipeline(
-        parser=TextParser(), chunker=SplitChunker(), embedder=embedder, store=store
+        parser=TextParser(), chunker=SplitChunker(), embedder=embedder, store=store,
+        owner_access=MemoryOwnerAdmission(),
     )
     try:
-        await pipeline.ingest(IngestJob(document_id=document_id, path=path))
+        await pipeline.ingest(IngestJob(
+            document_id=document_id, path=path, user_id="0197e50a-1234-7abc-8def-0123456789ab",
+        ))
     finally:
         await embedder.aclose()
     assert store.statuses[document_id] == DocumentStatus.FAILED.value

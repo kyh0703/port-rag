@@ -15,6 +15,7 @@ from rag.http.documents import create_documents_router
 from rag.http.responses import register_exception_handlers
 from rag.ingest.types import ReindexFailedError
 
+from tests.fakes import MemoryOwnerAdmission
 
 NOW = datetime(2026, 7, 9, 12, 0, tzinfo=UTC)
 
@@ -109,7 +110,7 @@ class FakeUploadStorage:
         self.base_path = base_path
         self.saved_paths: list[Path] = []
 
-    async def save(self, upload) -> Path:
+    async def save(self, upload, *, user_id: str) -> Path:
         path = self.base_path / f"{uuid.uuid4()}-{upload.filename}"
         path.write_bytes(await upload.read())
         self.saved_paths.append(path)
@@ -132,6 +133,7 @@ def build_client(
             worker=worker,
             storage=storage,
             reindexer=reindexer,
+            owner_access=MemoryOwnerAdmission(),
         )
     )
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)

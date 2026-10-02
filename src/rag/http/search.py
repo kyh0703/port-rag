@@ -17,6 +17,7 @@ from rag.http.responses import ok
 from rag.search.service import InvalidSearchRequest
 from rag.search.types import SearchHit
 from rag.security.retrieval_capability import InvalidRetrievalCapability
+from rag.security.owner_erasure import OwnerAdmission
 
 
 class SearchBoundary(Protocol):
@@ -74,6 +75,7 @@ def create_search_router(
     *,
     service: SearchBoundary,
     capability_verifier: RetrievalCapabilityBoundary,
+    owner_access: OwnerAdmission,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -83,6 +85,7 @@ def create_search_router(
         response_model_exclude={"error"},
     )
     async def search_documents(request: SearchRequest) -> ApiResponse[SearchResponse]:
+        await owner_access.assert_active(str(request.user_id))
         try:
             hits = await service.search(
                 user_id=str(request.user_id),
@@ -92,6 +95,7 @@ def create_search_router(
         except InvalidSearchRequest as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        await owner_access.assert_active(str(request.user_id))
         return ok(SearchResponse(results=[_to_response(hit) for hit in hits]))
 
     @router.post(
@@ -116,6 +120,7 @@ def create_search_router(
                 detail="Invalid retrieval capability",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
+        await owner_access.assert_active(user_id)
         try:
             hits = await service.search_revision(
                 user_id=user_id,
@@ -126,6 +131,7 @@ def create_search_router(
         except InvalidSearchRequest as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        await owner_access.assert_active(user_id)
         return ok(SearchResponse(results=[_to_response(hit) for hit in hits]))
 
     return router

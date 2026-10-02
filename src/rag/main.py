@@ -5,6 +5,7 @@ heavy provider imports are loaded lazily inside ``serve()``.
 """
 
 import asyncio
+from contextlib import AsyncExitStack
 from time import perf_counter
 from typing import cast
 
@@ -72,9 +73,9 @@ async def serve() -> None:
         metrics_enabled=settings.METRICS_ENABLED,
         internal_server_key=settings.INTERNAL_SERVER_KEY.get_secret_value(),
     )
-    engine = None
-    worker = None
 
+    from rag.http.account_erasure import AccountErasureService
+    from rag.http.account_erasure import create_account_erasure_router
     from rag.db.session import create_engine
     from rag.db.session import create_session_factory
     from rag.http.documents import SqlAlchemyDocumentRepository
@@ -85,75 +86,88 @@ async def serve() -> None:
     from rag.ingest.parser import DoclingParser
     from rag.ingest.pipeline import IngestPipeline
     from rag.ingest.store import SqlAlchemyIngestStore
+    from rag.ingest.uploads import LocalUploadStorage
     from rag.ingest.worker import IngestWorker
     from rag.knowledge.revisions import KnowledgeRevisionRepository
     from rag.search.repository import SearchRepository
     from rag.search.service import SearchService
     from rag.security.retrieval_capability import RetrievalCapabilityVerifier
+    from rag.security.owner_erasure import SqlAlchemyOwnerErasure
 
     metrics = runtime_app.state.metrics
-    engine = create_engine(settings.DATABASE_URL, metrics=metrics)
-    session_factory = create_session_factory(engine)
-    embedder = _create_embedder(settings, metrics=metrics)
-
-    pipeline = IngestPipeline(
-        parser=DoclingParser(),
-        chunker=HybridDoclingChunker(),
-        embedder=embedder,
-        store=SqlAlchemyIngestStore(session_factory),
-    )
-    worker = IngestWorker(pipeline, metrics=metrics)
-    worker.start()
-
-    runtime_app.include_router(
-        create_documents_router(
-            repository=SqlAlchemyDocumentRepository(session_factory),
-            worker=worker,
-            reindexer=pipeline,
+    async with AsyncExitStack() as resources:
+        engine = create_engine(settings.DATABASE_URL, metrics=metrics)
+        resources.push_async_callback(engine.dispose)
+        session_factory = create_session_factory(engine)
+        embedder = _create_embedder(settings, metrics=metrics)
+        resources.push_async_callback(embedder.aclose)
+        owner_access = SqlAlchemyOwnerErasure(session_factory)
+        storage = LocalUploadStorage(
+            owner_access=owner_access,
+            staging_root=settings.RAG_UPLOAD_STAGING_ROOT,
+            clean_legacy_uploads_on_start=settings.RAG_CLEAN_LEGACY_UPLOADS_ON_START,
         )
-    )
+        resources.callback(storage.close)
 
-    search_service = SearchService(
-        embedder=embedder,
-        repository=SearchRepository(session_factory),
-        default_top_k=settings.TOP_K_DEFAULT,
-    )
-    capability_verifier = RetrievalCapabilityVerifier(settings.RAG_RETRIEVAL_CAPABILITY_SECRET)
-
-    runtime_app.include_router(
-        create_search_router(
-            service=search_service,
-            capability_verifier=capability_verifier,
+        pipeline = IngestPipeline(
+            parser=DoclingParser(),
+            chunker=HybridDoclingChunker(),
+            embedder=embedder,
+            store=SqlAlchemyIngestStore(session_factory),
+            owner_access=owner_access,
         )
-    )
-    runtime_app.include_router(
-        create_knowledge_revisions_router(
-            repository=KnowledgeRevisionRepository(session_factory),
-            capability_verifier=capability_verifier,
+        worker = IngestWorker(
+            pipeline, owner_access=owner_access, storage=storage, metrics=metrics,
         )
-    )
+        worker.start()
+        resources.push_async_callback(worker.stop)
 
-    http_config = uvicorn.Config(
-        runtime_app,
-        host="0.0.0.0",
-        port=settings.HTTP_PORT,
-        log_level="info",
-    )
-    http_server = uvicorn.Server(http_config)
+        runtime_app.include_router(
+            create_documents_router(
+                repository=SqlAlchemyDocumentRepository(session_factory),
+                worker=worker,
+                storage=storage,
+                owner_access=owner_access,
+                reindexer=pipeline,
+            )
+        )
 
-    try:
+        search_service = SearchService(
+            embedder=embedder,
+            repository=SearchRepository(session_factory),
+            default_top_k=settings.TOP_K_DEFAULT,
+        )
+        capability_verifier = RetrievalCapabilityVerifier(settings.RAG_RETRIEVAL_CAPABILITY_SECRET)
+
+        runtime_app.include_router(
+            create_search_router(
+                service=search_service,
+                capability_verifier=capability_verifier,
+                owner_access=owner_access,
+            )
+        )
+        runtime_app.include_router(
+            create_knowledge_revisions_router(
+                repository=KnowledgeRevisionRepository(session_factory),
+                capability_verifier=capability_verifier,
+                owner_access=owner_access,
+            )
+        )
+        runtime_app.include_router(create_account_erasure_router(
+            service=AccountErasureService(
+                repository=owner_access, worker=worker, storage=storage,
+            ),
+        ))
+
+        http_config = uvicorn.Config(
+            runtime_app,
+            host="0.0.0.0",
+            port=settings.HTTP_PORT,
+            log_level="info",
+        )
+        http_server = uvicorn.Server(http_config)
         # uvicorn installs signal handlers and returns on SIGINT/SIGTERM.
         await http_server.serve()
-    finally:
-        try:
-            if worker is not None:
-                await worker.stop()
-        finally:
-            try:
-                await embedder.aclose()
-            finally:
-                if engine is not None:
-                    await engine.dispose()
 
 
 def initialize_sentry(settings: Settings) -> None:

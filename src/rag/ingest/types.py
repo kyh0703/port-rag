@@ -13,6 +13,7 @@ from typing import Protocol
 class IngestJob:
     document_id: uuid.UUID
     path: Path
+    user_id: str
 
 
 @dataclass(frozen=True)

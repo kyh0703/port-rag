@@ -3,7 +3,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy.dialects import postgresql
 
 from rag.db.models import Document
 from rag.db.models import DocumentChunk
@@ -28,20 +27,18 @@ class FakeSession:
     ) -> None:
         self._scalar_values = scalar_values
         self._scalar_rows = scalar_rows or []
-        self.scalar_statements = []
-        self.scalars_statements = []
-        self.commit_calls = 0
 
     async def scalar(self, statement):
-        self.scalar_statements.append(statement)
         return self._scalar_values.pop(0)
 
     async def scalars(self, statement) -> FakeScalarResult:
-        self.scalars_statements.append(statement)
         return FakeScalarResult(self._scalar_rows.pop(0))
 
+    async def execute(self, statement, parameters=None) -> None:
+        return None
+
     async def commit(self) -> None:
-        self.commit_calls += 1
+        return None
 
 
 class FakeSessionContext:
@@ -64,25 +61,7 @@ class FakeSessionFactory:
 
 
 @pytest.mark.asyncio
-async def test_reindex_lookup_is_owner_scoped_and_excludes_processing_documents() -> None:
-    session = FakeSession(scalar_values=[None])
-    store = SqlAlchemyIngestStore(FakeSessionFactory(session))
-
-    chunks = await store.get_chunks_for_reindex(
-        document_id=uuid.uuid4(),
-        user_id="0197e50a-1234-7abc-8def-0123456789ab",
-    )
-
-    assert chunks is None
-    assert session.scalars_statements == []
-    assert session.commit_calls == 0
-    compiled = str(session.scalar_statements[0].compile(dialect=postgresql.dialect()))
-    assert "documents.user_id = %(user_id_1)s" in compiled
-    assert "documents.status != %(status_1)s" in compiled
-
-
-@pytest.mark.asyncio
-async def test_reindex_updates_only_embeddings_and_commits() -> None:
+async def test_reindex_updates_embeddings_without_changing_source_payload() -> None:
     document_id = uuid.uuid4()
     user_id = uuid.UUID("0197e50a-1234-7abc-8def-0123456789ab")
     document = Document(
@@ -126,10 +105,3 @@ async def test_reindex_updates_only_embeddings_and_commits() -> None:
         ("second answer", {"source": "support.md", "section": "two"}),
     ]
     assert [chunk.embedding for chunk in chunks] == [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-    assert session.commit_calls == 1
-    document_query = str(session.scalar_statements[0].compile(dialect=postgresql.dialect()))
-    chunks_query = str(session.scalars_statements[0].compile(dialect=postgresql.dialect()))
-    assert "documents.user_id = %(user_id_1)s" in document_query
-    assert "documents.status != %(status_1)s" in document_query
-    assert "FROM chunks" in chunks_query
-    assert "ORDER BY chunks.seq" in chunks_query

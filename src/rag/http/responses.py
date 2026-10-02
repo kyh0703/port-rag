@@ -15,6 +15,9 @@ from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 
+from rag.security.owner_erasure import OwnerDataErased
+
+
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,18 @@ def ok(data: T, *, status_code: int = 200, message: str | None = None) -> ApiRes
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(OwnerDataErased)
+    async def owner_erased_handler(_request, _exc: OwnerDataErased) -> JSONResponse:
+        return JSONResponse(
+            status_code=410,
+            content={
+                "statusCode": 410,
+                "message": "RAG_OWNER_DATA_ERASED",
+                "error": "Gone",
+                "data": None,
+            },
+        )
+
     @app.exception_handler(HTTPException)
     async def http_exception_handler(_request, exc: HTTPException) -> JSONResponse:
         message = exc.detail if isinstance(exc.detail, str | list) else str(exc.detail)

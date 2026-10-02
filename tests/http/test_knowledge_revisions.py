@@ -11,6 +11,7 @@ from rag.http.knowledge_revisions import create_knowledge_revisions_router
 from rag.http.responses import register_exception_handlers
 from rag.knowledge.revisions import KnowledgeRevisionNotFound
 from rag.knowledge.revisions import KnowledgeRevisionRecord
+from tests.fakes import MemoryOwnerAdmission
 
 USER_ID = "0197e50a-1234-7abc-8def-0123456789ab"
 AUTHORIZATION = {"Authorization": "Bearer valid-capability"}
@@ -88,6 +89,7 @@ def build_client(
         create_knowledge_revisions_router(
             repository=repository,
             capability_verifier=verifier or FakeCapabilityVerifier(),
+            owner_access=MemoryOwnerAdmission(),
         )
     )
     return TestClient(app)

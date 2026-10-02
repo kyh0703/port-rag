@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 import uuid
 import re
 from collections.abc import Sequence
@@ -32,6 +31,8 @@ from rag.http.responses import ApiResponse
 from rag.http.responses import ok
 from rag.ingest.types import IngestJob
 from rag.ingest.types import ReindexFailedError
+from rag.security.owner_erasure import OwnerAdmission
+from rag.security.owner_erasure import lock_active_owner
 
 
 class SessionFactory(Protocol):
@@ -89,22 +90,8 @@ class DocumentReindexer(Protocol):
 
 
 class UploadStorage(Protocol):
-    async def save(self, upload: UploadFile) -> Path:
+    async def save(self, upload: UploadFile, *, user_id: str) -> Path:
         pass
-
-
-class LocalUploadStorage:
-    def __init__(self, upload_dir: Path | None = None) -> None:
-        self._upload_dir = upload_dir or Path(tempfile.mkdtemp(prefix="rag-uploads-"))
-        self._upload_dir.mkdir(parents=True, exist_ok=True)
-
-    async def save(self, upload: UploadFile) -> Path:
-        suffix = Path(upload.filename or "").suffix
-        path = self._upload_dir / f"{uuid.uuid4()}{suffix}"
-        with path.open("wb") as output:
-            while chunk := await upload.read(1024 * 1024):
-                output.write(chunk)
-        return path
 
 
 class SqlAlchemyDocumentRepository:
@@ -120,6 +107,7 @@ class SqlAlchemyDocumentRepository:
         mime: str,
     ) -> DocumentRecord:
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             document = Document(
                 user_id=uuid.UUID(user_id),
                 knowledge_key=knowledge_key,
@@ -147,6 +135,7 @@ class SqlAlchemyDocumentRepository:
             .order_by(Document.created_at.desc(), Document.id)
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             documents = (await session.scalars(statement)).all()
         return [_to_record(document) for document in documents]
 
@@ -161,6 +150,7 @@ class SqlAlchemyDocumentRepository:
             Document.user_id == uuid.UUID(user_id),
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             document = await session.scalar(statement)
         if document is None:
             return None
@@ -207,11 +197,11 @@ def create_documents_router(
     *,
     repository: DocumentRepository,
     worker: IngestQueue,
-    storage: UploadStorage | None = None,
+    storage: UploadStorage,
+    owner_access: OwnerAdmission,
     reindexer: DocumentReindexer | None = None,
 ) -> APIRouter:
     router = APIRouter()
-    upload_storage = storage or LocalUploadStorage()
 
     @router.post(
         "/documents",
@@ -228,16 +218,21 @@ def create_documents_router(
         resolved_knowledge_key = knowledge_key or f"knowledge_{uuid.uuid4().hex}"
         if not _KNOWLEDGE_KEY_PATTERN.fullmatch(resolved_knowledge_key):
             raise HTTPException(status_code=422, detail="invalid knowledge key")
-        path = await upload_storage.save(file)
+        await owner_access.assert_active(normalized_user_id)
+        path = await storage.save(file, user_id=normalized_user_id)
         document: DocumentRecord | None = None
         try:
+            await owner_access.assert_active(normalized_user_id)
             document = await repository.create_processing_document(
                 user_id=normalized_user_id,
                 knowledge_key=resolved_knowledge_key,
                 name=file.filename or "upload",
                 mime=file.content_type or "application/octet-stream",
             )
-            await worker.enqueue(IngestJob(document_id=document.id, path=path))
+            await worker.enqueue(IngestJob(
+                document_id=document.id, path=path, user_id=normalized_user_id,
+            ))
+            await owner_access.assert_active(normalized_user_id)
         except DuplicateKnowledgeKey as exc:
             path.unlink(missing_ok=True)
             raise HTTPException(status_code=409, detail="knowledge key already exists") from exc
@@ -261,6 +256,7 @@ def create_documents_router(
         user_id: UserIdQuery,
     ) -> ApiResponse[DocumentResponse]:
         normalized_user_id = str(user_id)
+        await owner_access.assert_active(normalized_user_id)
         document = await repository.get_document(
             document_id=document_id,
             user_id=normalized_user_id,
@@ -286,6 +282,7 @@ def create_documents_router(
         )
         if document is None:
             raise HTTPException(status_code=404, detail="document not found")
+        await owner_access.assert_active(normalized_user_id)
         return ok(_to_response(document))
 
     @router.get(
@@ -294,7 +291,9 @@ def create_documents_router(
         response_model_exclude={"error"},
     )
     async def list_documents(user_id: UserIdQuery) -> ApiResponse[list[DocumentResponse]]:
+        await owner_access.assert_active(str(user_id))
         documents = await repository.list_documents(user_id=str(user_id))
+        await owner_access.assert_active(str(user_id))
         return ok([_to_response(document) for document in documents])
 
     @router.get(
@@ -306,12 +305,14 @@ def create_documents_router(
         document_id: uuid.UUID,
         user_id: UserIdQuery,
     ) -> ApiResponse[DocumentResponse]:
+        await owner_access.assert_active(str(user_id))
         document = await repository.get_document(
             document_id=document_id,
             user_id=str(user_id),
         )
         if document is None:
             raise HTTPException(status_code=404, detail="document not found")
+        await owner_access.assert_active(str(user_id))
         return ok(_to_response(document))
 
     @router.delete(
@@ -320,6 +321,7 @@ def create_documents_router(
         response_model_exclude={"error"},
     )
     async def delete_document(document_id: uuid.UUID, user_id: UserIdQuery) -> ApiResponse[None]:
+        await owner_access.assert_active(str(user_id))
         deleted = await repository.delete_document(
             document_id=document_id,
             user_id=str(user_id),

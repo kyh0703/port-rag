@@ -15,7 +15,11 @@ from rag.metrics import Metrics
 
 
 def create_engine(database_url: str, *, metrics: Metrics | None = None) -> AsyncEngine:
-    engine = create_async_engine(normalize_asyncpg_url(database_url), pool_pre_ping=True)
+    engine = create_async_engine(
+        normalize_asyncpg_url(database_url),
+        pool_pre_ping=True,
+        isolation_level="READ COMMITTED",
+    )
     if metrics is None:
         return engine
 

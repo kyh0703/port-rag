@@ -13,6 +13,7 @@ from rag.db.models import Document
 from rag.db.models import DocumentChunk
 from rag.db.models import DocumentStatus
 from rag.ingest.types import IngestChunk
+from rag.security.owner_erasure import lock_active_owner
 
 
 class SqlAlchemyIngestStore:
@@ -69,6 +70,7 @@ class SqlAlchemyIngestStore:
             .order_by(DocumentChunk.seq)
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             document = await session.scalar(document_statement)
             if document is None:
                 return None
@@ -95,6 +97,7 @@ class SqlAlchemyIngestStore:
             .order_by(DocumentChunk.seq)
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             document = await session.scalar(document_statement)
             if document is None:
                 return False
@@ -122,6 +125,7 @@ class SqlAlchemyIngestStore:
             Document.status != DocumentStatus.PROCESSING.value,
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             document = await session.scalar(statement)
             if document is None:
                 return False
@@ -131,7 +135,14 @@ class SqlAlchemyIngestStore:
         return True
 
     async def _require_document(self, session: AsyncSession, document_id: uuid.UUID) -> Document:
-        document = await session.get(Document, document_id)
+        owner = await session.scalar(sa.select(Document.user_id).where(Document.id == document_id))
+        if owner is None:
+            raise ValueError(f"document not found: {document_id}")
+        await lock_active_owner(session, str(owner))
+        document = await session.scalar(
+            sa.select(Document).where(Document.id == document_id, Document.user_id == owner)
+            .with_for_update()
+        )
         if document is None:
             raise ValueError(f"document not found: {document_id}")
         return document

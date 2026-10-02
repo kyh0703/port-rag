@@ -8,6 +8,7 @@ from rag.http.search import create_search_router
 from rag.search.service import InvalidSearchRequest
 from rag.search.types import SearchHit
 from rag.security.retrieval_capability import InvalidRetrievalCapability
+from tests.fakes import MemoryOwnerAdmission
 
 
 class FakeSearchService:
@@ -72,7 +73,10 @@ def build_client(service, *, raise_server_exceptions: bool = True) -> TestClient
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(
-        create_search_router(service=service, capability_verifier=FakeCapabilityVerifier())
+        create_search_router(
+            service=service, capability_verifier=FakeCapabilityVerifier(),
+            owner_access=MemoryOwnerAdmission(),
+        )
     )
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 

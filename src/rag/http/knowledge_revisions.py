@@ -21,6 +21,7 @@ from rag.http.responses import ok
 from rag.knowledge.revisions import KnowledgeRevisionNotFound
 from rag.knowledge.revisions import KnowledgeRevisionRecord
 from rag.security.retrieval_capability import InvalidRetrievalCapability
+from rag.security.owner_erasure import OwnerAdmission
 
 
 class RevisionRepository(Protocol):
@@ -74,6 +75,7 @@ def create_knowledge_revisions_router(
     *,
     repository: RevisionRepository,
     capability_verifier: RetrievalCapabilityBoundary,
+    owner_access: OwnerAdmission,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -101,11 +103,13 @@ def create_knowledge_revisions_router(
                 detail="Invalid retrieval capability",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
+        await owner_access.assert_active(str(request.user_id))
         existing = await repository.get(
             revision_id=request.revision_id,
             user_id=str(request.user_id),
         )
         if existing is not None:
+            await owner_access.assert_active(str(request.user_id))
             return ok(_to_response(existing), status_code=201)
         try:
             revision = await repository.create(
@@ -115,6 +119,7 @@ def create_knowledge_revisions_router(
             )
         except KnowledgeRevisionNotFound as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        await owner_access.assert_active(str(request.user_id))
         return ok(_to_response(revision), status_code=201)
 
     @router.get(
@@ -125,7 +130,9 @@ def create_knowledge_revisions_router(
     async def list_revisions(
         user_id: UserIdQuery,
     ) -> ApiResponse[list[KnowledgeRevisionResponse]]:
+        await owner_access.assert_active(str(user_id))
         revisions = await repository.list(user_id=str(user_id))
+        await owner_access.assert_active(str(user_id))
         return ok([_to_response(revision) for revision in revisions])
 
     @router.get(
@@ -137,12 +144,14 @@ def create_knowledge_revisions_router(
         revision_id: uuid.UUID,
         user_id: UserIdQuery,
     ) -> ApiResponse[KnowledgeRevisionResponse]:
+        await owner_access.assert_active(str(user_id))
         revision = await repository.get(
             revision_id=revision_id,
             user_id=str(user_id),
         )
         if revision is None:
             raise HTTPException(status_code=404, detail="knowledge revision not found")
+        await owner_access.assert_active(str(user_id))
         return ok(_to_response(revision))
 
     return router
