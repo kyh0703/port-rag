@@ -185,6 +185,7 @@ def test_post_returns_processing_document_and_enqueues_ingest_job(tmp_path: Path
             "error": None,
             "createdAt": "2026-07-09T12:00:00Z",
             "updatedAt": "2026-07-09T12:00:00Z",
+            "webpage": None,
         },
     }
     assert repository.created == [(

@@ -24,9 +24,11 @@ from pydantic import ConfigDict
 from pydantic import Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from rag.db.models import Document
 from rag.db.models import DocumentStatus
+from rag.db.models import DocumentWebpage
 from rag.http.responses import ApiResponse
 from rag.http.responses import ok
 from rag.ingest.types import IngestJob
@@ -34,6 +36,8 @@ from rag.ingest.types import ReindexFailedError
 from rag.security.owner_erasure import OwnerAdmission
 from rag.security.owner_erasure import lock_active_owner
 
+from rag.webpages.types import WebpageState
+from rag.webpages.types import webpage_state
 
 class SessionFactory(Protocol):
     def __call__(self) -> AbstractAsyncContextManager[AsyncSession]:
@@ -51,6 +55,7 @@ class DocumentRecord:
     error: str | None
     created_at: datetime
     updated_at: datetime
+    webpage: WebpageState | None = None
 
 
 class DocumentRepository(Protocol):
@@ -131,6 +136,7 @@ class SqlAlchemyDocumentRepository:
     async def list_documents(self, *, user_id: str) -> list[DocumentRecord]:
         statement = (
             sa.select(Document)
+            .options(selectinload(Document.webpage))
             .where(Document.user_id == uuid.UUID(user_id))
             .order_by(Document.created_at.desc(), Document.id)
         )
@@ -145,7 +151,7 @@ class SqlAlchemyDocumentRepository:
         document_id: uuid.UUID,
         user_id: str,
     ) -> DocumentRecord | None:
-        statement = sa.select(Document).where(
+        statement = sa.select(Document).options(selectinload(Document.webpage)).where(
             Document.id == document_id,
             Document.user_id == uuid.UUID(user_id),
         )
@@ -162,9 +168,23 @@ class SqlAlchemyDocumentRepository:
             Document.user_id == uuid.UUID(user_id),
         )
         async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
             result = await session.execute(statement)
             await session.commit()
         return bool(result.rowcount)
+
+
+class WebpageStateResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
+
+    urls: list[str]
+    auto_sync: bool = Field(alias="autoSync")
+    sync_status: str = Field(alias="syncStatus")
+    last_synced_at: datetime | None = Field(alias="lastSyncedAt")
+    last_checked_at: datetime | None = Field(alias="lastCheckedAt")
+    next_sync_at: datetime | None = Field(alias="nextSyncAt")
+    sync_error: str | None = Field(alias="syncError")
+    last_sync_changed: bool | None = Field(alias="lastSyncChanged")
 
 
 class DocumentResponse(BaseModel):
@@ -179,6 +199,7 @@ class DocumentResponse(BaseModel):
     error: str | None
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
+    webpage: WebpageStateResponse | None = None
 
 
 UserIdForm = Annotated[uuid.UUID, Form(alias="userId")]
@@ -263,6 +284,8 @@ def create_documents_router(
         )
         if document is None:
             raise HTTPException(status_code=404, detail="document not found")
+        if document.webpage is not None:
+            raise HTTPException(status_code=409, detail="use webpage sync instead of file reindex")
         if document.status == DocumentStatus.PROCESSING.value:
             raise HTTPException(status_code=409, detail="document is still processing")
         if reindexer is None:
@@ -333,7 +356,8 @@ def create_documents_router(
     return router
 
 
-def _to_record(document: Document) -> DocumentRecord:
+def _to_record(document: Document, webpage: DocumentWebpage | None = None) -> DocumentRecord:
+    page = webpage if webpage is not None else document.__dict__.get("webpage")
     return DocumentRecord(
         id=document.id,
         user_id=str(document.user_id),
@@ -344,6 +368,7 @@ def _to_record(document: Document) -> DocumentRecord:
         error=document.error,
         created_at=document.created_at,
         updated_at=document.updated_at,
+        webpage=webpage_state(page) if page is not None else None,
     )
 
 
@@ -358,6 +383,8 @@ def _to_response(document: DocumentRecord) -> DocumentResponse:
         error=document.error,
         created_at=document.created_at,
         updated_at=document.updated_at,
+        webpage=WebpageStateResponse.model_validate(document.webpage)
+        if document.webpage is not None else None,
     )
 
 

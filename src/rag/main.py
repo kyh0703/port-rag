@@ -82,6 +82,7 @@ async def serve() -> None:
     from rag.http.documents import create_documents_router
     from rag.http.knowledge_revisions import create_knowledge_revisions_router
     from rag.http.search import create_search_router
+    from rag.http.webpages import create_webpages_router
     from rag.ingest.chunker import HybridDoclingChunker
     from rag.ingest.parser import DoclingParser
     from rag.ingest.pipeline import IngestPipeline
@@ -93,6 +94,9 @@ async def serve() -> None:
     from rag.search.service import SearchService
     from rag.security.retrieval_capability import RetrievalCapabilityVerifier
     from rag.security.owner_erasure import SqlAlchemyOwnerErasure
+    from rag.webpages.fetch import SafeWebpageFetcher
+    from rag.webpages.repository import WebpageRepository
+    from rag.webpages.worker import WebpageWorker
 
     metrics = runtime_app.state.metrics
     async with AsyncExitStack() as resources:
@@ -121,6 +125,17 @@ async def serve() -> None:
         )
         worker.start()
         resources.push_async_callback(worker.stop)
+
+        webpage_repository = WebpageRepository(session_factory)
+        webpage_fetcher = SafeWebpageFetcher()
+        webpage_worker = WebpageWorker(
+            repository=webpage_repository, fetcher=webpage_fetcher, embedder=embedder,
+        )
+        webpage_worker.start()
+        resources.push_async_callback(webpage_worker.stop)
+        runtime_app.include_router(create_webpages_router(
+            repository=webpage_repository, fetcher=webpage_fetcher, owner_access=owner_access,
+        ))
 
         runtime_app.include_router(
             create_documents_router(
@@ -156,6 +171,7 @@ async def serve() -> None:
         runtime_app.include_router(create_account_erasure_router(
             service=AccountErasureService(
                 repository=owner_access, worker=worker, storage=storage,
+                webpage_worker=webpage_worker,
             ),
         ))
 

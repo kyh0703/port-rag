@@ -1,4 +1,4 @@
-"""Internal immutable knowledge revision HTTP router."""
+"""Internal knowledge revisions: frozen files and explicit live webpage membership."""
 
 from __future__ import annotations
 
@@ -66,6 +66,7 @@ class KnowledgeRevisionResponse(BaseModel):
     user_id: uuid.UUID = Field(alias="userId")
     chunk_count: int = Field(alias="chunkCount")
     created_at: datetime = Field(alias="createdAt")
+    live_webpage_ids: list[uuid.UUID] = Field(alias="liveWebpageIds")
 
 
 UserIdQuery = Annotated[uuid.UUID, Query(alias="userId")]
@@ -180,4 +181,5 @@ def _to_response(revision: KnowledgeRevisionRecord) -> KnowledgeRevisionResponse
         user_id=revision.user_id,
         chunk_count=revision.chunk_count,
         created_at=revision.created_at,
+        live_webpage_ids=list(revision.live_webpage_ids),
     )

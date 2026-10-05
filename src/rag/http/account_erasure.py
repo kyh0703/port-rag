@@ -25,6 +25,10 @@ class OwnerErasureRepository(Protocol):
     async def erase(self, user_id: str) -> None: ...
 
 
+class ErasableWorker(Protocol):
+    async def erase_user(self, user_id: str) -> None: ...
+
+
 class AccountErasureService:
     def __init__(
         self,
@@ -32,16 +36,20 @@ class AccountErasureService:
         repository: OwnerErasureRepository,
         worker: IngestWorker,
         storage: LocalUploadStorage,
+        webpage_worker: ErasableWorker | None = None,
     ) -> None:
         self._repository = repository
         self._worker = worker
         self._storage = storage
+        self._webpage_worker = webpage_worker
 
     async def erase(self, user_id: str) -> None:
         # The fence commits before waiting on local work or filesystem cleanup.
         # A cleanup failure leaves the owner blocked and all SQL retry handles.
         await self._repository.fence(user_id)
         self._storage.require_legacy_cleanup()
+        if self._webpage_worker is not None:
+            await self._webpage_worker.erase_user(user_id)
         await self._worker.erase_user(user_id)
         await self._storage.erase_owner(user_id)
         await self._repository.erase(user_id)

@@ -77,6 +77,7 @@ async def test_create_revision_preserves_source_payload_in_snapshot() -> None:
             {
                 "document_id": document_id,
                 "document_name": "support.md",
+                "webpage_document_id": None,
                 "seq": 2,
                 "text": "immutable answer",
                 "metadata": {"page": 1},

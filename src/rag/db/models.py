@@ -80,6 +80,13 @@ class Document(Base):
         passive_deletes=True,
     )
 
+    webpage: Mapped[DocumentWebpage | None] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="raise",
+    )
+
 
 class DocumentChunk(Base):
     __tablename__ = "chunks"
@@ -173,3 +180,61 @@ class KnowledgeRevisionChunk(Base):
         server_default=sa.text("'{}'::jsonb"),
     )
     embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+
+
+class DocumentWebpage(Base):
+    __tablename__ = "document_webpages"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "sync_status IN ('idle', 'queued', 'running', 'failed')",
+            name="ck_document_webpages_sync_status",
+        ),
+        sa.CheckConstraint(
+            "jsonb_typeof(urls) = 'array' AND jsonb_array_length(urls) BETWEEN 1 AND 100",
+            name="ck_document_webpages_urls",
+        ),
+        sa.CheckConstraint(
+            "queue_reason IN ('initial', 'manual', 'automatic')",
+            name="ck_document_webpages_queue_reason",
+        ),
+        sa.CheckConstraint(
+            "(sync_status = 'running') = (claim_token IS NOT NULL AND claimed_at IS NOT NULL)",
+            name="ck_document_webpages_claim",
+        ),
+        sa.CheckConstraint("auto_sync OR next_sync_at IS NULL", name="ck_document_webpages_schedule"),
+        sa.Index("ix_document_webpages_due", "next_sync_at",
+                 postgresql_where=sa.text("auto_sync = true")),
+        sa.Index("ix_document_webpages_queue", "sync_status", "claimed_at"),
+    )
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True,
+    )
+    urls: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    auto_sync: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False,
+                                          server_default=sa.false())
+    sync_status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="queued",
+                                            server_default="queued")
+    queue_reason: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="initial",
+                                             server_default="initial")
+    content: Mapped[str] = mapped_column(sa.Text, nullable=False, default="", server_default="")
+    content_hash: Mapped[str | None] = mapped_column(sa.String(64))
+    last_synced_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    last_checked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    next_sync_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    sync_error: Mapped[str | None] = mapped_column(sa.Text)
+    last_sync_changed: Mapped[bool | None] = mapped_column(sa.Boolean)
+    claim_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    claimed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    document: Mapped[Document] = relationship(back_populates="webpage")
+
+
+class KnowledgeRevisionWebpage(Base):
+    """Immutable membership; no document FK so deleting a source cannot rewrite history."""
+
+    __tablename__ = "knowledge_revision_webpages"
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("knowledge_revisions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)

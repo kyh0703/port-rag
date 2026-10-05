@@ -119,6 +119,7 @@ def test_create_revision_returns_exact_immutable_identity() -> None:
         "userId": user_id,
         "chunkCount": 2,
         "createdAt": "2026-08-11T00:00:00Z",
+        "liveWebpageIds": [],
     }
     assert repository.create_calls == [
         (user_id, [uuid.UUID(document_id)], uuid.UUID(revision_id))
@@ -194,12 +195,14 @@ def test_list_revisions_is_user_scoped_and_preserves_newest_first_contract() -> 
             "userId": USER_ID,
             "chunkCount": 2,
             "createdAt": "2026-08-11T00:00:00Z",
+            "liveWebpageIds": [],
         },
         {
             "id": "0197e50a-1234-7abc-8def-0123456789ad",
             "userId": USER_ID,
             "chunkCount": 1,
             "createdAt": "2026-08-10T00:00:00Z",
+            "liveWebpageIds": [],
         },
     ]
 

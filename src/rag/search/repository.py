@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from rag.db.models import Document
 from rag.db.models import DocumentChunk
 from rag.db.models import DocumentStatus
+from rag.db.models import DocumentWebpage
 from rag.db.models import KnowledgeRevisionChunk
 from rag.db.models import KnowledgeRevision
+from rag.db.models import KnowledgeRevisionWebpage
 from rag.search.types import SearchHit
 from rag.security.owner_erasure import lock_active_owner
 
@@ -82,8 +84,15 @@ class SearchRepository:
         embedding: Sequence[float],
         top_k: int,
     ) -> list[SearchHit]:
-        distance = KnowledgeRevisionChunk.embedding.cosine_distance(list(embedding))
-        statement = (
+        revision_id = uuid.UUID(knowledge_revision_id)
+        owner_id = uuid.UUID(user_id)
+        query_vector = list(embedding)
+        distance = KnowledgeRevisionChunk.embedding.cosine_distance(query_vector)
+        selected_live_source = sa.exists().where(
+            KnowledgeRevisionWebpage.revision_id == KnowledgeRevisionChunk.revision_id,
+            KnowledgeRevisionWebpage.document_id == KnowledgeRevisionChunk.source_document_id,
+        )
+        frozen = (
             sa.select(
                 KnowledgeRevisionChunk.id.label("chunk_id"),
                 KnowledgeRevisionChunk.source_document_id.label("document_id"),
@@ -98,12 +107,40 @@ class SearchRepository:
                 KnowledgeRevision.id == KnowledgeRevisionChunk.revision_id,
             )
             .where(
-                KnowledgeRevisionChunk.revision_id == uuid.UUID(knowledge_revision_id),
-                KnowledgeRevision.user_id == uuid.UUID(user_id),
+                KnowledgeRevisionChunk.revision_id == revision_id,
+                KnowledgeRevision.user_id == owner_id,
+                ~selected_live_source,
             )
             .order_by(distance)
             .limit(top_k)
         )
+        live_distance = DocumentChunk.embedding.cosine_distance(query_vector)
+        live = (
+            sa.select(
+                DocumentChunk.id.label("chunk_id"),
+                Document.id.label("document_id"),
+                Document.name.label("document_name"),
+                DocumentChunk.text.label("text"),
+                (sa.literal(1.0) - live_distance).label("score"),
+                DocumentChunk.metadata_.label("metadata"),
+                DocumentChunk.seq.label("seq"),
+            )
+            .select_from(KnowledgeRevisionWebpage)
+            .join(KnowledgeRevision, KnowledgeRevision.id == KnowledgeRevisionWebpage.revision_id)
+            .join(Document, Document.id == KnowledgeRevisionWebpage.document_id)
+            .join(DocumentWebpage, DocumentWebpage.document_id == Document.id)
+            .join(DocumentChunk, DocumentChunk.document_id == Document.id)
+            .where(
+                KnowledgeRevisionWebpage.revision_id == revision_id,
+                KnowledgeRevision.user_id == owner_id,
+                Document.user_id == owner_id,
+                Document.status == DocumentStatus.READY.value,
+            )
+            .order_by(live_distance)
+            .limit(top_k)
+        )
+        candidates = sa.union_all(frozen, live).subquery()
+        statement = sa.select(candidates).order_by(candidates.c.score.desc()).limit(top_k)
 
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
