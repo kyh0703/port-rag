@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     SENTRY_DSN: str | None = None
     RAG_UPLOAD_STAGING_ROOT: Path | None = None
     RAG_CLEAN_LEGACY_UPLOADS_ON_START: bool = False
+    OPENBAO_ADDR: str = "https://openbao:8200"
+    OPENBAO_CA_CERT_FILE: Path = Path("/run/openbao-ca/ca.crt")
+    OPENBAO_ROLE_ID_FILE: Path = Path("/run/openbao/rag-role-id")
+    OPENBAO_SECRET_ID_FILE: Path = Path("/run/openbao/rag-secret-id")
+    OPENBAO_DATA_TRANSIT_KEY: str = "port-rag-private-data"
+    OPENBAO_LOOKUP_TRANSIT_KEY: str = "port-rag-private-lookup"
 
     @classmethod
     def settings_customise_sources(

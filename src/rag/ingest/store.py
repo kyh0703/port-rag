@@ -13,12 +13,21 @@ from rag.db.models import Document
 from rag.db.models import DocumentChunk
 from rag.db.models import DocumentStatus
 from rag.ingest.types import IngestChunk
+from rag.security.private_data import (
+    PrivateDataCipher,
+    StorageBinding,
+    encrypt_json,
+    read_json,
+    read_text,
+)
 from rag.security.owner_erasure import lock_active_owner
 
 
 class SqlAlchemyIngestStore:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], cipher: PrivateDataCipher
+    ) -> None:
         self._session_factory = session_factory
+        self._cipher = cipher
 
     async def replace_chunks_and_mark_ready(
         self,
@@ -36,8 +45,21 @@ class SqlAlchemyIngestStore:
                     DocumentChunk(
                         document_id=document_id,
                         seq=chunk.seq,
-                        text=chunk.text,
-                        metadata_=chunk.metadata,
+                        text=await self._cipher.encrypt(
+                            chunk.text,
+                            StorageBinding(
+                                str(document.user_id), str(document_id), f"chunk:{chunk.seq}:text"
+                            ),
+                        ),
+                        metadata_=await encrypt_json(
+                            self._cipher,
+                            chunk.metadata,
+                            StorageBinding(
+                                str(document.user_id),
+                                str(document_id),
+                                f"chunk:{chunk.seq}:metadata",
+                            ),
+                        ),
                         embedding=embedding,
                     )
                     for chunk, embedding in zip(chunks, embeddings, strict=True)
@@ -51,7 +73,18 @@ class SqlAlchemyIngestStore:
         async with self._session_factory() as session:
             document = await self._require_document(session, document_id)
             document.status = DocumentStatus.FAILED.value
-            document.error = error[:4000]
+            document.error = await self._cipher.encrypt(
+                error[:4000],
+                StorageBinding(str(document.user_id), str(document_id), "document:error"),
+            )
+            await session.commit()
+
+    async def mark_storage_unavailable(self, document_id: uuid.UUID) -> None:
+        # A fixed machine code has no user content and needs no crypto service.
+        async with self._session_factory() as session:
+            document = await self._require_document(session, document_id)
+            document.status = DocumentStatus.FAILED.value
+            document.error = "storage_encryption_unavailable"
             await session.commit()
 
     async def get_chunks_for_reindex(
@@ -76,7 +109,17 @@ class SqlAlchemyIngestStore:
                 return None
             chunks = (await session.scalars(chunks_statement)).all()
         return [
-            IngestChunk(seq=chunk.seq, text=chunk.text, metadata=chunk.metadata_)
+            IngestChunk(seq=chunk.seq, text=await read_text(
+                    self._cipher,
+                    chunk.text,
+                    StorageBinding(user_id, str(document_id), f"chunk:{chunk.seq}:text"),
+                ),
+                metadata=await read_json(
+                    self._cipher,
+                    chunk.metadata_,
+                    StorageBinding(user_id, str(document_id), f"chunk:{chunk.seq}:metadata"),
+                ),
+            )
             for chunk in chunks
         ]
 
@@ -130,7 +173,10 @@ class SqlAlchemyIngestStore:
             if document is None:
                 return False
             document.status = DocumentStatus.FAILED.value
-            document.error = error[:4000]
+            document.error = await self._cipher.encrypt(
+                error[:4000],
+                StorageBinding(str(document.user_id), str(document_id), "document:error"),
+            )
             await session.commit()
         return True
 

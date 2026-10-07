@@ -1,9 +1,11 @@
 from __future__ import annotations
+from tests.private_data_fixture import private_data_cipher
 
 import uuid
 from datetime import UTC
 
 import pytest
+from rag.security.private_data import StorageBinding, read_json
 
 from rag.knowledge.revisions import KnowledgeRevisionNotFound
 from rag.knowledge.revisions import KnowledgeRevisionRepository
@@ -85,7 +87,8 @@ async def test_create_revision_preserves_source_payload_in_snapshot() -> None:
             }
         ]
     )
-    repository = KnowledgeRevisionRepository(FakeSessionFactory(session))
+    repository = KnowledgeRevisionRepository(FakeSessionFactory(session), cipher=private_data_cipher
+    )
 
     revision = await repository.create(
         user_id=str(user_id),
@@ -100,19 +103,39 @@ async def test_create_revision_preserves_source_payload_in_snapshot() -> None:
     copied = session.added[1]
     assert copied.revision_id == revision_id
     assert copied.source_document_id == document_id
-    assert copied.document_name == "support.md"
-    assert copied.text == "immutable answer"
-    assert copied.metadata_ == {"page": 1}
+    assert copied.document_name.startswith("vault:")
+    assert (
+        await private_data_cipher.decrypt(
+            copied.document_name,
+            StorageBinding(str(user_id), str(revision_id), f"document:{document_id}:name"),
+        )
+        == "support.md"
+    )
+    assert (
+        await private_data_cipher.decrypt(
+            copied.text,
+            StorageBinding(
+                str(user_id), str(revision_id), f"document:{document_id}:chunk:{copied.seq}:text"
+            ),
+        )
+        == "immutable answer"
+    )
+    assert await read_json(
+        private_data_cipher,
+        copied.metadata_,
+        StorageBinding(
+            str(user_id), str(revision_id), f"document:{document_id}:chunk:{copied.seq}:metadata"
+        ),
+    ) == {"page": 1}
     assert list(copied.embedding) == [0.1, 0.2, 0.3]
 
 
 async def test_create_revision_rejects_missing_or_unready_selected_document() -> None:
-    repository = KnowledgeRevisionRepository(FakeSessionFactory(FakeSession([])))
+    repository = KnowledgeRevisionRepository(FakeSessionFactory(FakeSession([])), cipher=private_data_cipher
+    )
 
     with pytest.raises(KnowledgeRevisionNotFound, match="selected document"):
         await repository.create(
             user_id="0197e50a-1234-7abc-8def-0123456789ab",
             document_ids=[uuid.uuid4()],
         )
-
-

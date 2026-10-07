@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.private_data_fixture import private_data_cipher
 
 import uuid
 
@@ -89,7 +90,7 @@ async def test_reindex_updates_embeddings_without_changing_source_payload() -> N
         ),
     ]
     session = FakeSession(scalar_values=[document], scalar_rows=[chunks])
-    store = SqlAlchemyIngestStore(FakeSessionFactory(session))
+    store = SqlAlchemyIngestStore(FakeSessionFactory(session), cipher=private_data_cipher)
 
     updated = await store.replace_embeddings_and_mark_ready(
         document_id=document_id,

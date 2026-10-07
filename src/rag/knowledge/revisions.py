@@ -1,6 +1,13 @@
 """Freeze file chunks and snapshot selected membership of live webpage sources."""
 
 from __future__ import annotations
+from rag.security.private_data import (
+    PrivateDataCipher,
+    StorageBinding,
+    encrypt_json,
+    read_json,
+    read_text,
+)
 
 import uuid
 from collections.abc import Sequence
@@ -42,8 +49,9 @@ class KnowledgeRevisionRecord:
 
 
 class KnowledgeRevisionRepository:
-    def __init__(self, session_factory: SessionFactory) -> None:
+    def __init__(self, session_factory: SessionFactory, cipher: PrivateDataCipher) -> None:
         self._session_factory = session_factory
+        self._cipher = cipher
 
     async def create(
         self,
@@ -99,10 +107,48 @@ class KnowledgeRevisionRepository:
                     KnowledgeRevisionChunk(
                         revision_id=resolved_revision_id,
                         source_document_id=row["document_id"],
-                        document_name=row["document_name"],
+                        document_name=await self._cipher.encrypt(
+                            await read_text(
+                                self._cipher,
+                                row["document_name"],
+                                StorageBinding(user_id, str(row["document_id"]), "document:name"),
+                            ),
+                            StorageBinding(
+                                user_id,
+                                str(resolved_revision_id),
+                                f"document:{row['document_id']}:name",
+                            ),
+                        ),
                         seq=row["seq"],
-                        text=row["text"],
-                        metadata_=row["metadata"],
+                        text=await self._cipher.encrypt(
+                            await read_text(
+                                self._cipher,
+                                row["text"],
+                                StorageBinding(
+                                    user_id, str(row["document_id"]), f"chunk:{row['seq']}:text"
+                                ),
+                            ),
+                            StorageBinding(
+                                user_id,
+                                str(resolved_revision_id),
+                                f"document:{row['document_id']}:chunk:{row['seq']}:text",
+                            ),
+                        ),
+                        metadata_=await encrypt_json(
+                            self._cipher,
+                            await read_json(
+                                self._cipher,
+                                row["metadata"],
+                                StorageBinding(
+                                    user_id, str(row["document_id"]), f"chunk:{row['seq']}:metadata"
+                                ),
+                            ),
+                            StorageBinding(
+                                user_id,
+                                str(resolved_revision_id),
+                                f"document:{row['document_id']}:chunk:{row['seq']}:metadata",
+                            ),
+                        ),
                         embedding=row["embedding"],
                     )
                     for row in rows
@@ -141,7 +187,8 @@ class KnowledgeRevisionRepository:
             .join(DocumentChunk, DocumentChunk.document_id == Document.id)
             .where(KnowledgeRevisionWebpage.revision_id == KnowledgeRevision.id,
                    Document.user_id == KnowledgeRevision.user_id,
-                   Document.status == DocumentStatus.READY.value)
+                   Document.status == DocumentStatus.READY.value,
+            )
             .correlate(KnowledgeRevision).scalar_subquery()
         )
         live_ids = (
@@ -178,9 +225,10 @@ class KnowledgeRevisionRepository:
         return None if row is None else self._record(row)
 
     async def list(self, *, user_id: str) -> list[KnowledgeRevisionRecord]:
-        statement = self._summary().where(
+        statement = (
+            self._summary().where(
             KnowledgeRevision.user_id == uuid.UUID(user_id),
-        ).order_by(KnowledgeRevision.created_at.desc(), KnowledgeRevision.id.desc())
+        ).order_by(KnowledgeRevision.created_at.desc(), KnowledgeRevision.id.desc()))
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
             rows = (await session.execute(statement)).mappings().all()

@@ -9,6 +9,7 @@ import logging
 from contextlib import suppress
 from typing import Protocol
 
+from rag.security.private_data import PrivateDataCipher, StorageBinding
 from rag.ingest.types import IngestChunk, TextEmbedder
 from rag.webpages.fetch import WebpageFetchError, WebpagePage
 from rag.webpages.repository import WebpageClaim, WebpageRepository
@@ -24,10 +25,14 @@ class PageFetcher(Protocol):
 
 class WebpageWorker:
     def __init__(self, *, repository: WebpageRepository, fetcher: PageFetcher,
-                 embedder: TextEmbedder, poll_interval: float = 5.0) -> None:
+                 embedder: TextEmbedder,
+        cipher: PrivateDataCipher,
+        poll_interval: float = 5.0,
+    ) -> None:
         self._repository = repository
         self._fetcher = fetcher
         self._embedder = embedder
+        self._cipher = cipher
         self._poll_interval = poll_interval
         self._task: asyncio.Task | None = None
         self._erased_owner_hashes: set[str] = set()
@@ -105,9 +110,15 @@ class WebpageWorker:
                     [(url, page.text) for url, page in zip(claim.urls, pages, strict=True)],
                     ensure_ascii=False, separators=(",", ":"),
                 ).encode("utf-8")).hexdigest()
+                fingerprint = await self._cipher.lookup(
+                    digest,
+                    StorageBinding(
+                        claim.user_id, str(claim.document_id), "webpage:content-fingerprint"
+                    ),
+                )
                 content = "\n\n".join(page.text for page in pages)
                 chunks = embeddings = None
-                if digest != claim.content_hash:
+                if claim.content_hash not in (digest, fingerprint):
                     chunks = []
                     for url, page in zip(claim.urls, pages, strict=True):
                         for start in range(0, len(page.text), 1440):
@@ -115,7 +126,8 @@ class WebpageWorker:
                             if text:
                                 chunks.append(IngestChunk(
                                     seq=len(chunks), text=text,
-                                    metadata={"source_url": url, "url": page.url, "source": "webpage"},
+                                    metadata={"source_url": url, "url": page.url, "source": "webpage",
+                                        },
                                 ))
                     embeddings = []
                     # Even worst-case Unicode stays under the provider's aggregate
@@ -129,7 +141,7 @@ class WebpageWorker:
                             raise ValueError("embedding count mismatch")
                         embeddings.extend(vectors)
                 await self._repository.finish(
-                    claim, content=content, content_hash=digest,
+                    claim, content=content, content_hash=fingerprint,
                     chunks=chunks, embeddings=embeddings,
                 )
         except WebpageFetchError as exc:

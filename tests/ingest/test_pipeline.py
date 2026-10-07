@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.private_data_fixture import PlainParserInputFixture
 
 import uuid
 from dataclasses import dataclass
@@ -54,6 +55,10 @@ class MemoryStore:
     async def mark_failed(self, document_id: uuid.UUID, error: str) -> None:
         self.statuses[document_id] = DocumentStatus.FAILED.value
         self.errors[document_id] = error
+
+    async def mark_storage_unavailable(self, document_id):
+        self.statuses[document_id] = DocumentStatus.FAILED.value
+        self.errors[document_id] = "storage_encryption_unavailable"
 
     async def get_chunks_for_reindex(
         self,
@@ -136,6 +141,7 @@ async def test_successful_md_ingest_stores_chunks_and_marks_ready(tmp_path: Path
         embedder=embedder,
         store=store,
         owner_access=MemoryOwnerAdmission(),
+        storage=PlainParserInputFixture(),
     )
 
     await pipeline.ingest(IngestJob(
@@ -163,6 +169,7 @@ async def test_broken_parser_marks_document_failed(tmp_path: Path) -> None:
         embedder=StaticFakeEmbedder(dimensions=3),
         store=store,
         owner_access=MemoryOwnerAdmission(),
+        storage=PlainParserInputFixture(),
     )
 
     await pipeline.ingest(IngestJob(
@@ -187,6 +194,7 @@ async def test_chunk_metadata_and_seq_are_preserved(tmp_path: Path) -> None:
         embedder=StaticFakeEmbedder(dimensions=2),
         store=store,
         owner_access=MemoryOwnerAdmission(),
+        storage=PlainParserInputFixture(),
     )
 
     await pipeline.ingest(IngestJob(
@@ -227,6 +235,7 @@ async def test_reindex_preserves_saved_chunk_text_and_metadata(tmp_path: Path) -
         embedder=StaticFakeEmbedder(dimensions=3),
         store=store,
         owner_access=MemoryOwnerAdmission(),
+        storage=PlainParserInputFixture(),
     )
 
     reindexed = await pipeline.reindex(document_id=document_id, user_id=user_id)
@@ -280,6 +289,7 @@ async def test_reindex_failure_marks_document_failed_and_raises(
         embedder=embedder,
         store=store,
         owner_access=MemoryOwnerAdmission(),
+        storage=PlainParserInputFixture(),
     )
 
     with pytest.raises(ReindexFailedError):
@@ -322,6 +332,7 @@ async def test_upstream_credential_echo_is_not_persisted_in_ingest_error(tmp_pat
     pipeline = IngestPipeline(
         parser=TextParser(), chunker=SplitChunker(), embedder=embedder, store=store,
         owner_access=MemoryOwnerAdmission(),
+        storage=PlainParserInputFixture(),
     )
     try:
         await pipeline.ingest(IngestJob(

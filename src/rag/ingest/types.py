@@ -41,6 +41,10 @@ class TextEmbedder(Protocol):
     async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
+class RetryableIngestError(Exception):
+    """A transient storage failure; the encrypted original must remain available."""
+
+
 class ReindexFailedError(Exception):
     """Raised after a reindex failure has been persisted on its document."""
 
@@ -54,6 +58,8 @@ class IngestStore(Protocol):
     ) -> None: ...
 
     async def mark_failed(self, document_id: uuid.UUID, error: str) -> None: ...
+
+    async def mark_storage_unavailable(self, document_id: uuid.UUID) -> None: ...
 
     async def get_chunks_for_reindex(
         self,

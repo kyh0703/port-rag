@@ -10,10 +10,15 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from rag.db.models import Document, DocumentChunk, DocumentStatus, DocumentWebpage
-from rag.http.documents import DocumentRecord, DuplicateKnowledgeKey, SessionFactory, _to_record
+from rag.http.documents import (
+    DocumentRecord, DuplicateKnowledgeKey, SessionFactory,
+    _to_private_record,
+)
 from rag.ingest.types import IngestChunk
 from rag.security.owner_erasure import OwnerDataErased, lock_active_owner
 from rag.webpages.fetch import MAX_URLS, WebpageFetchError, normalize_url
+
+from rag.security.private_data import PrivateDataCipher, StorageBinding, encrypt_json, read_text
 
 SYNC_INTERVAL = timedelta(hours=24)
 CLAIM_LEASE = timedelta(minutes=15)
@@ -40,19 +45,26 @@ class WebpageClaim:
 
 
 class WebpageRepository:
-    def __init__(self, session_factory: SessionFactory) -> None:
+    def __init__(self, session_factory: SessionFactory, cipher: PrivateDataCipher) -> None:
         self._session_factory = session_factory
+        self._cipher = cipher
 
     async def create(self, *, user_id: str, knowledge_key: str, name: str | None,
-                     urls: list[str], auto_sync: bool = False) -> DocumentRecord:
+                     urls: list[str], auto_sync: bool = False,
+    ) -> DocumentRecord:
         if not 1 <= len(urls) <= MAX_URLS:
             raise WebpageFetchError("select between 1 and 100 webpage URLs")
         normalized_urls = list(dict.fromkeys(normalize_url(url) for url in urls))
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
+            document_id = uuid.uuid4()
             document = Document(
+                id=document_id,
                 user_id=uuid.UUID(user_id), knowledge_key=knowledge_key,
-                name=name or normalized_urls[0], mime="text/html", status=DocumentStatus.PROCESSING,
+                name=await self._cipher.encrypt(
+                    name or normalized_urls[0],
+                    StorageBinding(user_id, str(document_id), "document:name"),
+                ), mime="text/html", status=DocumentStatus.PROCESSING,
             )
             session.add(document)
             try:
@@ -67,13 +79,20 @@ class WebpageRepository:
                     raise DuplicateKnowledgeKey from exc
                 raise
             page = DocumentWebpage(
-                document_id=document.id, urls=normalized_urls, auto_sync=auto_sync,
-                sync_status="queued", queue_reason="initial", content="",
+                document_id=document.id, urls=[
+                    await self._cipher.encrypt(
+                        url, StorageBinding(user_id, str(document_id), f"webpage:url:{index}")
+                    )
+                    for index, url in enumerate(normalized_urls)
+                ], auto_sync=auto_sync,
+                sync_status="queued", queue_reason="initial", content=await self._cipher.encrypt(
+                    "", StorageBinding(user_id, str(document_id), "webpage:content")
+                ),
             )
             session.add(page)
             await session.flush()
             await session.refresh(document)
-            record = _to_record(document, page)
+            record = await _to_private_record(document, self._cipher, page)
             await session.commit()
             return record
 
@@ -90,12 +109,12 @@ class WebpageRepository:
             if row is None:
                 return None
             document, page = row
-            return WebpageDetail(document=_to_record(document, page), content=page.content)
+            return await self._detail(document, page)
 
     async def enqueue(self, *, document_id: uuid.UUID, user_id: str) -> WebpageDetail | None:
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
-            row = (await session.execute(self._select(document_id, user_id).with_for_update()))
+            row = await session.execute(self._select(document_id, user_id).with_for_update())
             row = row.one_or_none()
             if row is None:
                 return None
@@ -113,13 +132,13 @@ class WebpageRepository:
                 document.error = None
             document.updated_at = datetime.now(UTC)
             await session.commit()
-            return WebpageDetail(document=_to_record(document, page), content=page.content)
+            return await self._detail(document, page)
 
     async def set_auto_sync(self, *, document_id: uuid.UUID, user_id: str,
                             auto_sync: bool) -> WebpageDetail | None:
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
-            row = (await session.execute(self._select(document_id, user_id).with_for_update()))
+            row = await session.execute(self._select(document_id, user_id).with_for_update())
             row = row.one_or_none()
             if row is None:
                 return None
@@ -138,17 +157,19 @@ class WebpageRepository:
                     page.claimed_at = None
                 document.updated_at = now
             await session.commit()
-            return WebpageDetail(document=_to_record(document, page), content=page.content)
+            return await self._detail(document, page)
 
     @staticmethod
     def _due(now: datetime):
         return sa.or_(
             DocumentWebpage.sync_status == "queued",
             sa.and_(DocumentWebpage.sync_status == "running",
-                    DocumentWebpage.claimed_at < now - CLAIM_LEASE),
+                    DocumentWebpage.claimed_at < now - CLAIM_LEASE,
+            ),
             sa.and_(DocumentWebpage.auto_sync.is_(True),
                     DocumentWebpage.sync_status.in_(["idle", "failed"]),
-                    DocumentWebpage.next_sync_at <= now),
+                    DocumentWebpage.next_sync_at <= now,
+            ),
         )
 
     async def claim(self) -> WebpageClaim | None:
@@ -184,7 +205,18 @@ class WebpageRepository:
                     document.updated_at = now
                     claim = WebpageClaim(
                         document_id=document.id, user_id=str(owner), token=page.claim_token,
-                        urls=tuple(page.urls), content_hash=page.content_hash, reason=page.queue_reason,
+                        urls=tuple(
+                            [
+                                await read_text(
+                                    self._cipher,
+                                    url,
+                                    StorageBinding(
+                                        str(owner), str(document_id), f"webpage:url:{index}"
+                                    ),
+                                )
+                                for index, url in enumerate(page.urls)
+                            ]
+                        ), content_hash=page.content_hash, reason=page.queue_reason,
                     )
                     await session.commit()
                     return claim
@@ -202,16 +234,19 @@ class WebpageRepository:
                     .where(Document.id == claim.document_id,
                            Document.user_id == uuid.UUID(claim.user_id),
                            DocumentWebpage.sync_status == "running",
-                           DocumentWebpage.claim_token == claim.token)
+                           DocumentWebpage.claim_token == claim.token,
+                        )
                 ))
         except OwnerDataErased:
             return False
 
     async def finish(self, claim: WebpageClaim, *, content: str, content_hash: str,
                      chunks: list[IngestChunk] | None = None,
-                     embeddings: list[list[float]] | None = None) -> bool:
+                     embeddings: list[list[float]] | None = None,
+    ) -> bool:
         return await self._complete(claim, content=content, content_hash=content_hash,
-                                    chunks=chunks, embeddings=embeddings, error=None)
+                                    chunks=chunks, embeddings=embeddings, error=None,
+        )
 
     async def fail(self, claim: WebpageClaim, error: str) -> bool:
         return await self._complete(claim, content=None, content_hash=None,
@@ -219,7 +254,8 @@ class WebpageRepository:
 
     async def _complete(self, claim: WebpageClaim, *, content: str | None,
                         content_hash: str | None, chunks: list[IngestChunk] | None,
-                        embeddings: list[list[float]] | None, error: str | None) -> bool:
+                        embeddings: list[list[float]] | None, error: str | None,
+    ) -> bool:
         try:
             async with self._session_factory() as session:
                 await lock_active_owner(session, claim.user_id)
@@ -242,11 +278,31 @@ class WebpageRepository:
                             DocumentChunk.document_id == document.id,
                         ))
                         session.add_all([
-                            DocumentChunk(document_id=document.id, seq=chunk.seq, text=chunk.text,
-                                          metadata_=chunk.metadata, embedding=embedding)
+                            DocumentChunk(document_id=document.id, seq=chunk.seq, text=await self._cipher.encrypt(
+                                        chunk.text,
+                                        StorageBinding(
+                                            claim.user_id,
+                                            str(document.id),
+                                            f"chunk:{chunk.seq}:text",
+                                        ),
+                                    ),
+                                    metadata_=await encrypt_json(
+                                        self._cipher,
+                                        chunk.metadata,
+                                        StorageBinding(
+                                            claim.user_id,
+                                            str(document.id),
+                                            f"chunk:{chunk.seq}:metadata",
+                                        ),
+                                    ),
+                                    embedding=embedding,
+                                )
                             for chunk, embedding in zip(chunks, embeddings, strict=True)
                         ])
-                        page.content = content
+                        page.content = await self._cipher.encrypt(
+                            content,
+                            StorageBinding(claim.user_id, str(document.id), "webpage:content"),
+                        )
                         page.content_hash = content_hash
                     document.status = DocumentStatus.READY
                     document.error = None
@@ -255,9 +311,17 @@ class WebpageRepository:
                     page.sync_status = "failed"
                     if page.content_hash is None:
                         document.status = DocumentStatus.FAILED
-                        document.error = error
+                        document.error = await self._cipher.encrypt(
+                            error, StorageBinding(claim.user_id, str(document.id), "document:error")
+                        )
                 now = datetime.now(UTC)
-                page.sync_error = error
+                page.sync_error = (
+                    await self._cipher.encrypt(
+                        error, StorageBinding(claim.user_id, str(document.id), "webpage:error")
+                    )
+                    if error is not None
+                    else None
+                )
                 page.last_sync_changed = changed if error is None else None
                 page.last_checked_at = now
                 if error is None:
@@ -271,3 +335,13 @@ class WebpageRepository:
                 return True
         except OwnerDataErased:
             return False
+
+    async def _detail(self, document: Document, page: DocumentWebpage) -> WebpageDetail:
+        return WebpageDetail(
+            document=await _to_private_record(document, self._cipher, page),
+            content=await read_text(
+                self._cipher,
+                page.content,
+                StorageBinding(str(document.user_id), str(document.id), "webpage:content"),
+            ),
+        )

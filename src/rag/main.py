@@ -6,6 +6,7 @@ heavy provider imports are loaded lazily inside ``serve()``.
 
 import asyncio
 from contextlib import AsyncExitStack
+from pathlib import Path
 from time import perf_counter
 from typing import cast
 
@@ -83,6 +84,7 @@ async def serve() -> None:
     from rag.http.knowledge_revisions import create_knowledge_revisions_router
     from rag.http.search import create_search_router
     from rag.http.webpages import create_webpages_router
+    from rag.security.private_data import OpenBaoPrivateDataCipher
     from rag.ingest.chunker import HybridDoclingChunker
     from rag.ingest.parser import DoclingParser
     from rag.ingest.pipeline import IngestPipeline
@@ -106,8 +108,24 @@ async def serve() -> None:
         embedder = _create_embedder(settings, metrics=metrics)
         resources.push_async_callback(embedder.aclose)
         owner_access = SqlAlchemyOwnerErasure(session_factory)
+        private_cipher = OpenBaoPrivateDataCipher(
+            address=settings.OPENBAO_ADDR,
+            ca_file=settings.OPENBAO_CA_CERT_FILE,
+            role_file=settings.OPENBAO_ROLE_ID_FILE,
+            secret_file=settings.OPENBAO_SECRET_ID_FILE,
+            key=settings.OPENBAO_DATA_TRANSIT_KEY,
+            lookup_key=settings.OPENBAO_LOOKUP_TRANSIT_KEY,
+        )
+        resources.push_async_callback(private_cipher.aclose)
+        # Multipart spooling and parser working files must remain in volatile memory.
+        import tempfile
+
+        volatile_root = LocalUploadStorage._require_volatile_root()
+        if not Path(tempfile.gettempdir()).resolve().is_relative_to(volatile_root):
+            raise RuntimeError("RAG multipart spooling requires TMPDIR on a memory filesystem")
         storage = LocalUploadStorage(
             owner_access=owner_access,
+            cipher=private_cipher,
             staging_root=settings.RAG_UPLOAD_STAGING_ROOT,
             clean_legacy_uploads_on_start=settings.RAG_CLEAN_LEGACY_UPLOADS_ON_START,
         )
@@ -117,7 +135,8 @@ async def serve() -> None:
             parser=DoclingParser(),
             chunker=HybridDoclingChunker(),
             embedder=embedder,
-            store=SqlAlchemyIngestStore(session_factory),
+            store=SqlAlchemyIngestStore(session_factory, private_cipher),
+            storage=storage,
             owner_access=owner_access,
         )
         worker = IngestWorker(
@@ -126,10 +145,11 @@ async def serve() -> None:
         worker.start()
         resources.push_async_callback(worker.stop)
 
-        webpage_repository = WebpageRepository(session_factory)
+        webpage_repository = WebpageRepository(session_factory, private_cipher)
         webpage_fetcher = SafeWebpageFetcher()
         webpage_worker = WebpageWorker(
             repository=webpage_repository, fetcher=webpage_fetcher, embedder=embedder,
+            cipher=private_cipher,
         )
         webpage_worker.start()
         resources.push_async_callback(webpage_worker.stop)
@@ -139,7 +159,7 @@ async def serve() -> None:
 
         runtime_app.include_router(
             create_documents_router(
-                repository=SqlAlchemyDocumentRepository(session_factory),
+                repository=SqlAlchemyDocumentRepository(session_factory, private_cipher),
                 worker=worker,
                 storage=storage,
                 owner_access=owner_access,
@@ -149,7 +169,7 @@ async def serve() -> None:
 
         search_service = SearchService(
             embedder=embedder,
-            repository=SearchRepository(session_factory),
+            repository=SearchRepository(session_factory, private_cipher),
             default_top_k=settings.TOP_K_DEFAULT,
         )
         capability_verifier = RetrievalCapabilityVerifier(settings.RAG_RETRIEVAL_CAPABILITY_SECRET)
@@ -163,7 +183,7 @@ async def serve() -> None:
         )
         runtime_app.include_router(
             create_knowledge_revisions_router(
-                repository=KnowledgeRevisionRepository(session_factory),
+                repository=KnowledgeRevisionRepository(session_factory, private_cipher),
                 capability_verifier=capability_verifier,
                 owner_access=owner_access,
             )

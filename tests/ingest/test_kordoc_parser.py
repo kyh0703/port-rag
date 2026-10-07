@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.private_data_fixture import PlainParserInputFixture
 
 import os
 import subprocess
@@ -156,6 +157,7 @@ async def test_partial_hwpx_ingest_fails_without_publishing_chunks(tmp_path: Pat
         embedder=StaticFakeEmbedder(dimensions=3),
         store=store,
         owner_access=MemoryOwnerAdmission(),
+        storage=PlainParserInputFixture(),
     )
 
     await pipeline.ingest(IngestJob(

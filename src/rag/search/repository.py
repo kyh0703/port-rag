@@ -1,6 +1,7 @@
 """pgvector-backed search repository."""
 
 from __future__ import annotations
+from rag.security.private_data import PrivateDataCipher, StorageBinding, read_json, read_text
 
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
@@ -28,8 +29,9 @@ class SessionFactory(Protocol):
 
 
 class SearchRepository:
-    def __init__(self, session_factory: SessionFactory) -> None:
+    def __init__(self, session_factory: SessionFactory, cipher: PrivateDataCipher) -> None:
         self._session_factory = session_factory
+        self._cipher = cipher
 
     async def search(
         self,
@@ -63,16 +65,7 @@ class SearchRepository:
             result = await session.execute(statement)
             rows = result.mappings().all()
 
-        return [
-            SearchHit(
-                chunk_id=str(row["chunk_id"]),
-                document_id=str(row["document_id"]),
-                document_name=str(row["document_name"]),
-                text=str(row["text"]),
-                score=float(row["score"]),
-                metadata=_string_metadata(row["metadata"]),
-                seq=int(row["seq"]),
-            )
+        return [await self._hit(row, user_id)
             for row in rows
         ]
 
@@ -101,6 +94,7 @@ class SearchRepository:
                 (sa.literal(1.0) - distance).label("score"),
                 KnowledgeRevisionChunk.metadata_.label("metadata"),
                 KnowledgeRevisionChunk.seq.label("seq"),
+                KnowledgeRevisionChunk.revision_id.label("storage_revision_id"),
             )
             .join(
                 KnowledgeRevision,
@@ -124,6 +118,7 @@ class SearchRepository:
                 (sa.literal(1.0) - live_distance).label("score"),
                 DocumentChunk.metadata_.label("metadata"),
                 DocumentChunk.seq.label("seq"),
+                sa.cast(sa.null(), sa.UUID).label("storage_revision_id"),
             )
             .select_from(KnowledgeRevisionWebpage)
             .join(KnowledgeRevision, KnowledgeRevision.id == KnowledgeRevisionWebpage.revision_id)
@@ -147,18 +142,38 @@ class SearchRepository:
             result = await session.execute(statement)
             rows = result.mappings().all()
 
-        return [
-            SearchHit(
+        return [await self._hit(row, user_id) for row in rows]
+
+    async def _hit(self, row: Any, user_id: str) -> SearchHit:
+        document_id = str(row["document_id"])
+        revision_id = row.get("storage_revision_id")
+        resource = str(revision_id) if revision_id is not None else document_id
+        prefix = f"document:{document_id}:" if revision_id is not None else ""
+        seq = int(row["seq"])
+        name_field = f"document:{document_id}:name" if revision_id is not None else "document:name"
+        return SearchHit(
                 chunk_id=str(row["chunk_id"]),
-                document_id=str(row["document_id"]),
-                document_name=str(row["document_name"]),
-                text=str(row["text"]),
+                document_id=document_id,
+                document_name=await read_text(
+                self._cipher,
+                str(row["document_name"]),
+                StorageBinding(user_id, resource, name_field),
+            ),
+            text=await read_text(
+                self._cipher,
+                str(row["text"]),
+                StorageBinding(user_id, resource, f"{prefix}chunk:{seq}:text"),
+            ),
                 score=float(row["score"]),
-                metadata=_string_metadata(row["metadata"]),
-                seq=int(row["seq"]),
+            seq=seq,
+            metadata=_string_metadata(
+                await read_json(
+                    self._cipher,
+                    row["metadata"],
+                    StorageBinding(user_id, resource, f"{prefix}chunk:{seq}:metadata"),
             )
-            for row in rows
-        ]
+            ),
+        )
 
 
 def _string_metadata(metadata: Any) -> dict[str, str]:

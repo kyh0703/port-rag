@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.private_data_fixture import private_data_cipher
 
 import uuid
 from pathlib import Path
@@ -27,6 +28,7 @@ async def test_worker_continues_after_job_failure(tmp_path: Path) -> None:
     owners = MemoryOwnerAdmission()
     storage = LocalUploadStorage(
         staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners,
+        cipher=private_data_cipher,
     )
     worker = IngestWorker(pipeline, owner_access=owners, storage=storage)
     user_id = "0197e50a-1234-7abc-8def-0123456789ab"

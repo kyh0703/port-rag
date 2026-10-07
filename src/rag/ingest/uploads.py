@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import fcntl
 import hashlib
 import os
@@ -16,6 +18,7 @@ from typing import BinaryIO
 
 from starlette.datastructures import UploadFile
 
+from rag.security.private_data import PrivateDataCipher, StorageBinding, PrivateDataUnavailable
 from rag.security.owner_erasure import OwnerAdmission
 
 _INSTANCE_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -32,11 +35,13 @@ class LocalUploadStorage:
         self,
         *,
         owner_access: OwnerAdmission,
+        cipher: PrivateDataCipher,
         staging_root: Path | None = None,
         legacy_root: Path | None = None,
         clean_legacy_uploads_on_start: bool = False,
     ) -> None:
         self._owner_access = owner_access
+        self._cipher = cipher
         self._root = staging_root or Path(tempfile.gettempdir()) / "rag-owner-uploads-v1"
         self._legacy_root = legacy_root or Path(tempfile.gettempdir())
         self._instance_id = uuid.uuid4().hex
@@ -114,13 +119,102 @@ class LocalUploadStorage:
             path = directory / f"{uuid.uuid4().hex}{Path(upload.filename or '').suffix}"
             try:
                 with path.open("xb") as output:
-                    while chunk := await upload.read(1024 * 1024):
-                        output.write(chunk)
+                    output.write(b"port-openbao-upload-v1\n")
+                    count = size = 0
+                    digest = hashlib.sha256()
+                    while chunk := await upload.read(65536):
+                        size += len(chunk)
+                        if size > 128 * 1024 * 1024:
+                            raise ValueError("RAG upload exceeds the size limit")
+                        digest.update(chunk)
+                        encrypted = await self._cipher.encrypt(
+                            base64.b64encode(chunk).decode(),
+                            StorageBinding(
+                                str(uuid.UUID(user_id)), path.name, f"upload:chunk:{count}"
+                            ),
+                        )
+                        output.write(
+                            json.dumps({"ciphertext": encrypted}, separators=(",", ":")).encode()
+                            + b"\n"
+                        )
+                        count += 1
+                    manifest = await self._cipher.encrypt(
+                        {"count": count, "bytes": size, "sha256": digest.hexdigest()},
+                        StorageBinding(str(uuid.UUID(user_id)), path.name, "upload:manifest"),
+                    )
+                    output.write(
+                        json.dumps({"manifest": manifest}, separators=(",", ":")).encode() + b"\n"
+                    )
                 await self._owner_access.assert_active(user_id)
             except BaseException:
                 path.unlink(missing_ok=True)
                 raise
             return path
+
+    @asynccontextmanager
+    async def decrypted_path(self, path: Path, *, user_id: str) -> AsyncIterator[Path]:
+        """Plain parser input exists only on a verified memory filesystem and is always removed."""
+        await self._owner_access.assert_active(user_id)
+        owner = str(uuid.UUID(user_id))
+        owner_hash = hashlib.sha256(owner.encode()).hexdigest()
+        if path.is_symlink() or not path.resolve().is_relative_to(
+            (self._root / "owners" / owner_hash).resolve()
+        ):
+            raise PrivateDataUnavailable()
+        root = self._require_volatile_root()
+        with tempfile.TemporaryDirectory(prefix="rag-private-parse-", dir=root) as folder:
+            target = Path(folder) / path.name
+            try:
+                count = size = 0
+                digest = hashlib.sha256()
+                manifest = None
+                with path.open("rb") as source, target.open("xb") as output:
+                    if source.readline(128) != b"port-openbao-upload-v1\n":
+                        raise PrivateDataUnavailable()
+                    while line := source.readline(524289):
+                        if len(line) > 524288 or manifest is not None:
+                            raise PrivateDataUnavailable()
+                        value = json.loads(line)
+                        if "manifest" in value:
+                            manifest = await self._cipher.decrypt(
+                                value["manifest"],
+                                StorageBinding(owner, path.name, "upload:manifest"),
+                            )
+                            continue
+                        encoded = await self._cipher.decrypt(
+                            value["ciphertext"],
+                            StorageBinding(owner, path.name, f"upload:chunk:{count}"),
+                        )
+                        chunk = base64.b64decode(encoded, validate=True)
+                        if len(chunk) > 65536 or base64.b64encode(chunk).decode() != encoded:
+                            raise PrivateDataUnavailable()
+                        size += len(chunk)
+                        if size > 128 * 1024 * 1024:
+                            raise PrivateDataUnavailable()
+                        digest.update(chunk)
+                        output.write(chunk)
+                        count += 1
+                if (
+                    not isinstance(manifest, dict)
+                    or manifest.get("count") != count
+                    or manifest.get("bytes") != size
+                    or manifest.get("sha256") != digest.hexdigest()
+                ):
+                    raise PrivateDataUnavailable()
+                await self._owner_access.assert_active(user_id)
+                yield target
+            finally:
+                target.unlink(missing_ok=True)
+
+    @staticmethod
+    def _require_volatile_root() -> Path:
+        root = Path("/dev/shm")
+        if not root.is_dir() or root.is_symlink():
+            raise RuntimeError("RAG private parsing requires a memory filesystem")
+        mounts = Path("/proc/mounts").read_text().splitlines()
+        if not any(line.split()[1:3] == ["/dev/shm", "tmpfs"] for line in mounts):
+            raise RuntimeError("RAG private parsing requires a memory filesystem")
+        return root
 
     async def erase_owner(self, user_id: str) -> None:
         # Active upload/ingest holds a shared lock. The durable SQL fence stops

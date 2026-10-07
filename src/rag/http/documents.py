@@ -1,12 +1,13 @@
 """Internal document management HTTP router."""
 
 from __future__ import annotations
+from rag.security.private_data import PrivateDataCipher, StorageBinding, read_text
 
 import uuid
 import re
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -100,8 +101,9 @@ class UploadStorage(Protocol):
 
 
 class SqlAlchemyDocumentRepository:
-    def __init__(self, session_factory: SessionFactory) -> None:
+    def __init__(self, session_factory: SessionFactory, cipher: PrivateDataCipher) -> None:
         self._session_factory = session_factory
+        self._cipher = cipher
 
     async def create_processing_document(
         self,
@@ -113,10 +115,15 @@ class SqlAlchemyDocumentRepository:
     ) -> DocumentRecord:
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
+            document_id = uuid.uuid4()
+            encrypted_name = await self._cipher.encrypt(
+                name, StorageBinding(user_id, str(document_id), "document:name")
+            )
             document = Document(
+                id=document_id,
                 user_id=uuid.UUID(user_id),
                 knowledge_key=knowledge_key,
-                name=name,
+                name=encrypted_name,
                 mime=mime,
                 status=DocumentStatus.PROCESSING.value,
             )
@@ -126,12 +133,14 @@ class SqlAlchemyDocumentRepository:
             except IntegrityError as exc:
                 await session.rollback()
                 constraint = getattr(getattr(exc, "orig", None), "diag", None)
-                if getattr(constraint, "constraint_name", None) == "uq_documents_user_knowledge_key":
+                if (
+                    getattr(constraint, "constraint_name", None) == "uq_documents_user_knowledge_key"
+                ):
                     raise DuplicateKnowledgeKey from exc
                 raise
             await session.refresh(document)
             await session.commit()
-            return _to_record(document)
+            return await _to_private_record(document, self._cipher)
 
     async def list_documents(self, *, user_id: str) -> list[DocumentRecord]:
         statement = (
@@ -143,7 +152,7 @@ class SqlAlchemyDocumentRepository:
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
             documents = (await session.scalars(statement)).all()
-        return [_to_record(document) for document in documents]
+        return [await _to_private_record(document, self._cipher) for document in documents]
 
     async def get_document(
         self,
@@ -151,16 +160,18 @@ class SqlAlchemyDocumentRepository:
         document_id: uuid.UUID,
         user_id: str,
     ) -> DocumentRecord | None:
-        statement = sa.select(Document).options(selectinload(Document.webpage)).where(
+        statement = (
+            sa.select(Document).options(selectinload(Document.webpage)).where(
             Document.id == document_id,
             Document.user_id == uuid.UUID(user_id),
+        )
         )
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
             document = await session.scalar(statement)
         if document is None:
             return None
-        return _to_record(document)
+        return await _to_private_record(document, self._cipher)
 
     async def delete_document(self, *, document_id: uuid.UUID, user_id: str) -> bool:
         statement = sa.delete(Document).where(
@@ -369,6 +380,32 @@ def _to_record(document: Document, webpage: DocumentWebpage | None = None) -> Do
         created_at=document.created_at,
         updated_at=document.updated_at,
         webpage=webpage_state(page) if page is not None else None,
+    )
+
+
+async def _to_private_record(
+    document: Document, cipher: PrivateDataCipher, webpage: DocumentWebpage | None = None
+) -> DocumentRecord:
+    record = _to_record(document, webpage)
+
+    def binding(field: str) -> StorageBinding:
+        return StorageBinding(record.user_id, str(record.id), field)
+
+    page = record.webpage
+    if page is not None:
+        page = replace(
+            page,
+            urls=[
+                await read_text(cipher, value, binding(f"webpage:url:{index}"))
+                for index, value in enumerate(page.urls)
+            ],
+            sync_error=await read_text(cipher, page.sync_error, binding("webpage:error")),
+        )
+    return replace(
+        record,
+        name=await read_text(cipher, record.name, binding("document:name")),
+        error=await read_text(cipher, record.error, binding("document:error")),
+        webpage=page,
     )
 
 

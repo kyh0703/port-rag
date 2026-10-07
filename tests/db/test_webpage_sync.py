@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.private_data_fixture import private_data_cipher
 
 import asyncio
 import hashlib
@@ -41,7 +42,9 @@ async def webpage_database():
             async with sessions() as session:
                 await session.execute(sa.text(
                     "DELETE FROM public.rag_erased_owners WHERE owner_hash IN (:first, :second)"
-                ), dict(zip(("first", "second"), [hashlib.sha256(u.encode()).hexdigest() for u in user_ids])))
+                ), dict(zip(("first", "second"), [hashlib.sha256(u.encode()).hexdigest() for u in user_ids],
+                        )),
+                )
                 await session.commit()
         finally:
             await engine.dispose()
@@ -81,8 +84,11 @@ async def chunks(sessions, document_id):
 
 async def test_changed_unchanged_and_failed_sync_preserve_last_ready_content(webpage_database):
     sessions, _, (owner, _) = webpage_database
-    repo, source, embedder = WebpageRepository(sessions), PageSource(), Embedder()
-    worker = WebpageWorker(repository=repo, fetcher=source, embedder=embedder)
+    repo, source, embedder = (
+        WebpageRepository(sessions, cipher=private_data_cipher), PageSource(), Embedder(),
+    )
+    worker = WebpageWorker(repository=repo, fetcher=source, embedder=embedder, cipher=private_data_cipher
+    )
     document = await register(repo, owner)
     assert document.status == "processing"
     assert document.webpage.sync_status == "queued"
@@ -91,7 +97,9 @@ async def test_changed_unchanged_and_failed_sync_preserve_last_ready_content(web
     before = await chunks(sessions, document.id)
     assert first.content == source.text
     assert first.document.webpage.last_sync_changed is True
-    assert first.document.webpage.next_sync_at - first.document.webpage.last_checked_at == timedelta(hours=24)
+    assert (
+        first.document.webpage.next_sync_at - first.document.webpage.last_checked_at == timedelta(hours=24)
+    )
 
     await repo.enqueue(document_id=document.id, user_id=owner)
     assert await worker.run_once()
@@ -123,10 +131,11 @@ async def test_changed_unchanged_and_failed_sync_preserve_last_ready_content(web
 
 async def test_initial_failure_and_explicit_off_never_schedule(webpage_database):
     sessions, _, (owner, other) = webpage_database
-    repo, source = WebpageRepository(sessions), PageSource()
+    repo, source = WebpageRepository(sessions, cipher=private_data_cipher), PageSource()
     source.error = WebpageFetchError("source unavailable")
     doc = await register(repo, owner, auto_sync=False)
-    worker = WebpageWorker(repository=repo, fetcher=source, embedder=Embedder())
+    worker = WebpageWorker(repository=repo, fetcher=source, embedder=Embedder(), cipher=private_data_cipher
+    )
     assert await worker.run_once()
     detail = await repo.get(document_id=doc.id, user_id=owner)
     assert detail.document.status == "failed"
@@ -140,8 +149,9 @@ async def test_initial_failure_and_explicit_off_never_schedule(webpage_database)
 
 async def test_concurrent_claim_stale_recovery_off_and_delete_fence(webpage_database):
     sessions, _, (owner, _) = webpage_database
-    repo, source = WebpageRepository(sessions), PageSource()
-    worker = WebpageWorker(repository=repo, fetcher=source, embedder=Embedder())
+    repo, source = WebpageRepository(sessions, cipher=private_data_cipher), PageSource()
+    worker = WebpageWorker(repository=repo, fetcher=source, embedder=Embedder(), cipher=private_data_cipher
+    )
     doc = await register(repo, owner)
     with pytest.raises(SyncConflict):
         await repo.enqueue(document_id=doc.id, user_id=owner)
@@ -171,15 +181,18 @@ async def test_concurrent_claim_stale_recovery_off_and_delete_fence(webpage_data
     assert not await worker.run_once()
     await repo.enqueue(document_id=doc.id, user_id=owner)
     deleting = await repo.claim()
-    await SqlAlchemyDocumentRepository(sessions).delete_document(document_id=doc.id, user_id=owner)
+    await SqlAlchemyDocumentRepository(sessions, cipher=private_data_cipher).delete_document(document_id=doc.id, user_id=owner)
     assert not await repo.finish(deleting, content="deleted stale", content_hash="stale", chunks=[], embeddings=[])
     assert await chunks(sessions, doc.id) == []
 
 
 async def test_revision_resolves_only_selected_live_webpages_and_frozen_files(webpage_database):
     sessions, owners, (owner, other) = webpage_database
-    repo, source, embedder = WebpageRepository(sessions), PageSource(), Embedder()
-    worker = WebpageWorker(repository=repo, fetcher=source, embedder=embedder)
+    repo, source, embedder = (
+        WebpageRepository(sessions, cipher=private_data_cipher), PageSource(), Embedder(),
+    )
+    worker = WebpageWorker(repository=repo, fetcher=source, embedder=embedder, cipher=private_data_cipher
+    )
     selected = await register(repo, owner, "selected")
     await worker.run_once()
     await register(repo, owner, "not_selected")
@@ -189,12 +202,14 @@ async def test_revision_resolves_only_selected_live_webpages_and_frozen_files(we
     file_id = uuid.uuid4()
     async with sessions() as session:
         session.add(Document(id=file_id, user_id=uuid.UUID(owner), knowledge_key="frozen_file",
-                             name="File", mime="text/plain", status="ready"))
+                             name="File", mime="text/plain", status="ready",
+            ))
         await session.flush()
         session.add(DocumentChunk(document_id=file_id, seq=0, text="Frozen file text",
-                                  metadata_={}, embedding=[1.0] + [0.0] * 1535))
+                                  metadata_={}, embedding=[1.0] + [0.0] * 1535,
+            ))
         await session.commit()
-    revisions = KnowledgeRevisionRepository(sessions)
+    revisions = KnowledgeRevisionRepository(sessions, cipher=private_data_cipher)
     revision = await revisions.create(user_id=owner, document_ids=[selected.id, file_id])
     assert revision.live_webpage_ids == (selected.id,)
     async with sessions() as session:
@@ -208,14 +223,15 @@ async def test_revision_resolves_only_selected_live_webpages_and_frozen_files(we
     source.text = "Fresh selected live webpage text"
     await repo.enqueue(document_id=selected.id, user_id=owner)
     await worker.run_once()
-    search = SearchRepository(sessions)
+    search = SearchRepository(sessions, cipher=private_data_cipher)
     arguments = dict(user_id=owner, knowledge_revision_id=str(revision.id),
-                     embedding=[1.0] + [0.0] * 1535, top_k=50)
+                     embedding=[1.0] + [0.0] * 1535, top_k=50,
+    )
     hits = await search.search_revision(**arguments)
     assert {hit.document_id for hit in hits} == {str(selected.id), str(file_id)}
     assert {hit.text for hit in hits} == {source.text, "Frozen file text"}
     assert await search.search_revision(**{**arguments, "user_id": other}) == []
-    await SqlAlchemyDocumentRepository(sessions).delete_document(document_id=selected.id, user_id=owner)
+    await SqlAlchemyDocumentRepository(sessions, cipher=private_data_cipher).delete_document(document_id=selected.id, user_id=owner)
     hits = await search.search_revision(**arguments)
     assert [hit.text for hit in hits] == ["Frozen file text"]
     async with sessions() as session:
@@ -231,7 +247,7 @@ async def test_revision_resolves_only_selected_live_webpages_and_frozen_files(we
 
 async def test_owner_erasure_fences_inflight_sync_and_removes_state(webpage_database):
     sessions, owners, (owner, _) = webpage_database
-    repo = WebpageRepository(sessions)
+    repo = WebpageRepository(sessions, cipher=private_data_cipher)
     doc = await register(repo, owner)
     claim = await repo.claim()
     await owners.erase(owner)
@@ -244,8 +260,9 @@ async def test_owner_erasure_fences_inflight_sync_and_removes_state(webpage_data
 
 async def test_disabling_auto_sync_does_not_discard_manual_completion(webpage_database):
     sessions, _, (owner, _) = webpage_database
-    repo, source = WebpageRepository(sessions), PageSource()
-    worker = WebpageWorker(repository=repo, fetcher=source, embedder=Embedder())
+    repo, source = WebpageRepository(sessions, cipher=private_data_cipher), PageSource()
+    worker = WebpageWorker(repository=repo, fetcher=source, embedder=Embedder(), cipher=private_data_cipher
+    )
     doc = await register(repo, owner)
     await worker.run_once()
     await repo.enqueue(document_id=doc.id, user_id=owner)
@@ -262,7 +279,7 @@ async def test_disabling_auto_sync_does_not_discard_manual_completion(webpage_da
 
 async def test_erasure_service_drains_webpage_fetch_before_acknowledging(webpage_database):
     sessions, owners, (owner, _) = webpage_database
-    repo = WebpageRepository(sessions)
+    repo = WebpageRepository(sessions, cipher=private_data_cipher)
     doc = await register(repo, owner)
     started, cancelled = asyncio.Event(), asyncio.Event()
 
@@ -275,7 +292,8 @@ async def test_erasure_service_drains_webpage_fetch_before_acknowledging(webpage
 
     fetcher, embedder = AsyncMock(), AsyncMock()
     fetcher.fetch.side_effect = blocked_fetch
-    worker = WebpageWorker(repository=repo, fetcher=fetcher, embedder=embedder)
+    worker = WebpageWorker(repository=repo, fetcher=fetcher, embedder=embedder, cipher=private_data_cipher
+    )
     task = asyncio.create_task(worker.run_once())
     await asyncio.wait_for(started.wait(), timeout=2)
     storage = Mock()
@@ -293,15 +311,17 @@ async def test_erasure_service_drains_webpage_fetch_before_acknowledging(webpage
 
 async def test_embedding_failure_cannot_replace_previously_ready_content(webpage_database):
     sessions, _, (owner, _) = webpage_database
-    repo, source = WebpageRepository(sessions), PageSource()
+    repo, source = WebpageRepository(sessions, cipher=private_data_cipher), PageSource()
     doc = await register(repo, owner)
-    await WebpageWorker(repository=repo, fetcher=source, embedder=Embedder()).run_once()
+    await WebpageWorker(repository=repo, fetcher=source, embedder=Embedder(), cipher=private_data_cipher
+    ).run_once()
     before = await chunks(sessions, doc.id)
     source.text = "Changed page that cannot currently be embedded"
     embedder = AsyncMock()
     embedder.embed_texts.side_effect = RuntimeError("synthetic provider failure")
     await repo.enqueue(document_id=doc.id, user_id=owner)
-    await WebpageWorker(repository=repo, fetcher=source, embedder=embedder).run_once()
+    await WebpageWorker(repository=repo, fetcher=source, embedder=embedder, cipher=private_data_cipher
+    ).run_once()
     detail = await repo.get(document_id=doc.id, user_id=owner)
     assert detail.document.status == "ready"
     assert detail.content == PageSource.text

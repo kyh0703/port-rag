@@ -1,4 +1,6 @@
 from __future__ import annotations
+from tests.private_data_fixture import PlainParserInputFixture
+from tests.private_data_fixture import private_data_cipher
 
 import asyncio
 import base64
@@ -13,6 +15,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from rag.security.private_data import StorageBinding, read_text, read_json
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 from starlette.datastructures import UploadFile
@@ -43,13 +46,18 @@ SECRET = "test-only-retrieval-capability-secret-0123456789"
 
 
 def capability(user_id: str, revision_id: str) -> str:
-    payload = base64.urlsafe_b64encode(json.dumps({
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({
         "userId": user_id, "knowledgeRevisionId": revision_id,
         "sessionId": "synthetic-session", "exp": 2000,
-    }, separators=(",", ":")).encode()).decode().rstrip("=")
-    signature = base64.urlsafe_b64encode(
+    }, separators=(",", ":"),
+            ).encode()).decode().rstrip("=")
+    )
+    signature = (
+        base64.urlsafe_b64encode(
         hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest()
     ).decode().rstrip("=")
+    )
     return f"{payload}.{signature}"
 
 
@@ -73,22 +81,24 @@ async def database():
                 await session.execute(sa.text(
                     "DELETE FROM public.rag_erased_owners WHERE owner_hash IN (:first, :second)"
                 ), {"first": hashlib.sha256(user_ids[0].encode()).hexdigest(),
-                    "second": hashlib.sha256(user_ids[1].encode()).hexdigest()})
+                    "second": hashlib.sha256(user_ids[1].encode()).hexdigest(),
+                    },
+                )
                 await session.commit()
         finally:
             await engine.dispose()
 
 
 async def seed(sessions, user_id: str, *, name: str, text: str):
-    documents = SqlAlchemyDocumentRepository(sessions)
+    documents = SqlAlchemyDocumentRepository(sessions, cipher=private_data_cipher)
     document = await documents.create_processing_document(
         user_id=user_id, knowledge_key="synthetic_notes", name=name, mime="text/plain"
     )
-    await SqlAlchemyIngestStore(sessions).replace_chunks_and_mark_ready(
+    await SqlAlchemyIngestStore(sessions, cipher=private_data_cipher).replace_chunks_and_mark_ready(
         document.id, [IngestChunk(seq=0, text=text, metadata={"private": text})],
         [[1.0] + [0.0] * 1535],
     )
-    revision = await KnowledgeRevisionRepository(sessions).create(
+    revision = await KnowledgeRevisionRepository(sessions, cipher=private_data_cipher).create(
         user_id=user_id, document_ids=[document.id]
     )
     return document, revision
@@ -102,12 +112,14 @@ async def test_authenticated_repeat_purge_removes_current_immutable_and_staging_
     target, target_revision = await seed(sessions, owner, name="private.txt", text="private answer")
     preserved, other_revision = await seed(sessions, other, name="other.txt", text="other answer")
     storage = LocalUploadStorage(
-        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners
+        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners,
+        cipher=private_data_cipher,
     )
     embedder = StaticFakeEmbedder()
     pipeline = IngestPipeline(
         parser=TextParser(), chunker=SplitChunker(), embedder=embedder,
-        store=SqlAlchemyIngestStore(sessions), owner_access=owners,
+        store=SqlAlchemyIngestStore(sessions, cipher=private_data_cipher), owner_access=owners,
+        storage=storage,
     )
     worker = IngestWorker(pipeline, owner_access=owners, storage=storage)
     target_path = await storage.save(UploadFile(io.BytesIO(b"private raw"), filename="a.txt"), user_id=owner)
@@ -119,27 +131,28 @@ async def test_authenticated_repeat_purge_removes_current_immutable_and_staging_
         repository=owners, worker=worker, storage=storage,
     )))
     app.include_router(create_documents_router(
-        repository=SqlAlchemyDocumentRepository(sessions), worker=worker, storage=storage,
+        repository=SqlAlchemyDocumentRepository(sessions, cipher=private_data_cipher), worker=worker, storage=storage,
         reindexer=pipeline, owner_access=owners,
     ))
     verifier = RetrievalCapabilityVerifier(SECRET, now=lambda: 1000)
     app.include_router(create_knowledge_revisions_router(
-        repository=KnowledgeRevisionRepository(sessions), capability_verifier=verifier,
+        repository=KnowledgeRevisionRepository(sessions, cipher=private_data_cipher), capability_verifier=verifier,
         owner_access=owners,
     ))
     app.include_router(create_search_router(
-        service=SearchService(embedder=embedder, repository=SearchRepository(sessions)),
+        service=SearchService(embedder=embedder, repository=SearchRepository(sessions, cipher=private_data_cipher)),
         capability_verifier=verifier, owner_access=owners,
     ))
     headers = {"x-internal-server": KEY}
-    signed_headers = {**headers, "Authorization": f"Bearer {capability(owner, str(target_revision.id))}"}
+    signed_headers = {**headers, "Authorization": f"Bearer {capability(owner, str(target_revision.id))}",
+    }
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://rag.test") as client:
             url = f"/users/{owner}/data"
             for rejected in ({}, {"x-internal-server": "wrong-internal-server-key-0123456789"}):
                 response = await client.delete(url, headers=rejected)
                 assert response.status_code == 401
-                assert target_path.read_bytes() == b"private raw"
+                assert target_path.read_bytes().startswith(b"port-openbao-upload-v1\n")
             before = await client.post(
                 f"/knowledge-revisions/{target_revision.id}/search", json={"query": "private"},
                 headers=signed_headers,
@@ -150,7 +163,7 @@ async def test_authenticated_repeat_purge_removes_current_immutable_and_staging_
                 assert response.status_code == 200
                 assert response.json()["data"] == {"userId": owner, "erased": True}
             assert not target_path.exists()
-            assert other_path.read_bytes() == b"other raw"
+            assert other_path.read_bytes().startswith(b"port-openbao-upload-v1\n")
             rejected_search = await client.post(
                 f"/knowledge-revisions/{target_revision.id}/search", json={"query": "private"},
                 headers=signed_headers,
@@ -158,27 +171,45 @@ async def test_authenticated_repeat_purge_removes_current_immutable_and_staging_
             assert rejected_search.status_code == 410
             replay = await client.post("/knowledge-revisions", headers=signed_headers, json={
                 "userId": owner, "revisionId": str(target_revision.id), "documentIds": [],
-            })
+            },
+            )
             assert replay.status_code == 410
             late_upload = await client.post("/documents", headers=headers, data={"userId": owner},
-                files={"file": ("late.txt", b"must not survive", "text/plain")})
+                files={"file": ("late.txt", b"must not survive", "text/plain")},
+            )
             assert late_upload.status_code == 410
             other_search = await client.post(
                 f"/knowledge-revisions/{other_revision.id}/search", json={"query": "other"},
-                headers={**headers, "Authorization": f"Bearer {capability(other, str(other_revision.id))}"},
+                headers={**headers, "Authorization": f"Bearer {capability(other, str(other_revision.id))}",
+                },
             )
             assert [hit["text"] for hit in other_search.json()["data"]["results"]] == ["other answer"]
         async with sessions() as session:
             assert await session.get(Document, target.id) is None
             assert await session.get(KnowledgeRevision, target_revision.id) is None
-            assert await session.scalar(sa.select(sa.func.count()).select_from(DocumentChunk).where(
+            assert (
+                await session.scalar(sa.select(sa.func.count()).select_from(DocumentChunk).where(
                 DocumentChunk.document_id == target.id)) == 0
-            assert await session.scalar(sa.select(sa.func.count()).select_from(KnowledgeRevisionChunk).where(
+            )
+            assert (
+                await session.scalar(sa.select(sa.func.count()).select_from(KnowledgeRevisionChunk).where(
                 KnowledgeRevisionChunk.revision_id == target_revision.id)) == 0
+            )
             other_chunk = await session.scalar(sa.select(DocumentChunk).where(
                 DocumentChunk.document_id == preserved.id))
-            assert other_chunk.text == "other answer"
-            assert other_chunk.metadata_ == {"private": "other answer"}
+            assert (
+                await read_text(
+                    private_data_cipher,
+                    other_chunk.text,
+                    StorageBinding(other, str(preserved.id), "chunk:0:text"),
+                )
+                == "other answer"
+            )
+            assert await read_json(
+                private_data_cipher,
+                other_chunk.metadata_,
+                StorageBinding(other, str(preserved.id), "chunk:0:metadata"),
+            ) == {"private": "other answer"}
             assert list(other_chunk.embedding) == [1.0] + [0.0] * 1535
     finally:
         storage.close()
@@ -225,7 +256,9 @@ async def test_inflight_embedding_cannot_repopulate_erased_document(database, tm
     path = tmp_path / "inflight.txt"
     path.write_text("late private data")
     pipeline = IngestPipeline(parser=TextParser(), chunker=SplitChunker(), embedder=DelayedEmbedder(),
-        store=SqlAlchemyIngestStore(sessions), owner_access=owners)
+        store=SqlAlchemyIngestStore(sessions, cipher=private_data_cipher), owner_access=owners,
+        storage=PlainParserInputFixture(),
+    )
     ingestion = asyncio.create_task(pipeline.ingest(IngestJob(
         document_id=target.id, path=path, user_id=owner,
     )))
@@ -238,28 +271,40 @@ async def test_inflight_embedding_cannot_repopulate_erased_document(database, tm
         await ingestion
     async with sessions() as session:
         assert await session.get(Document, target.id) is None
-        assert await session.scalar(sa.select(sa.func.count()).select_from(DocumentChunk).where(
+        assert (
+            await session.scalar(sa.select(sa.func.count()).select_from(DocumentChunk).where(
             DocumentChunk.document_id == target.id)) == 0
+        )
         other_chunk = await session.scalar(sa.select(DocumentChunk).where(
             DocumentChunk.document_id == preserved.id))
-        assert other_chunk.text == "other data"
+        assert (
+            await read_text(
+                private_data_cipher,
+                other_chunk.text,
+                StorageBinding(other, str(preserved.id), "chunk:0:text"),
+            )
+            == "other data"
+        )
     assert not path.exists()
 
 
 @pytest.mark.asyncio
-async def test_current_search_reindex_and_revision_snapshot_preserve_owner_boundaries(database) -> None:
+async def test_current_search_reindex_and_revision_snapshot_preserve_owner_boundaries(database,
+) -> None:
     sessions, _, (owner, other) = database
     target, revision = await seed(sessions, owner, name="target.txt", text="owner answer")
     preserved, _ = await seed(sessions, other, name="other.txt", text="other answer")
-    repository = SearchRepository(sessions)
-    store = SqlAlchemyIngestStore(sessions)
+    repository = SearchRepository(sessions, cipher=private_data_cipher)
+    store = SqlAlchemyIngestStore(sessions, cipher=private_data_cipher)
     embedding = [1.0] + [0.0] * 1535
     assert [hit.text for hit in await repository.search(
         user_id=owner, embedding=embedding, top_k=5,
     )] == ["owner answer"]
-    assert await repository.search_revision(
+    assert (
+        await repository.search_revision(
         user_id=other, knowledge_revision_id=str(revision.id), embedding=embedding, top_k=5,
     ) == []
+    )
     assert await store.get_chunks_for_reindex(target.id, other) is None
     assert not await store.replace_embeddings_and_mark_ready(target.id, other, [embedding])
     replacement = [0.0, 1.0] + [0.0] * 1534
@@ -269,19 +314,48 @@ async def test_current_search_reindex_and_revision_snapshot_preserve_owner_bound
             DocumentChunk.document_id == target.id))
         snapshot = await session.scalar(sa.select(KnowledgeRevisionChunk).where(
             KnowledgeRevisionChunk.revision_id == revision.id))
-        assert current.text == "owner answer"
-        assert current.metadata_ == {"private": "owner answer"}
+        assert (
+            await read_text(
+                private_data_cipher,
+                current.text,
+                StorageBinding(owner, str(target.id), "chunk:0:text"),
+            )
+            == "owner answer"
+        )
+        assert await read_json(
+            private_data_cipher,
+            current.metadata_,
+            StorageBinding(owner, str(target.id), "chunk:0:metadata"),
+        ) == {"private": "owner answer"}
         assert list(current.embedding) == replacement
-        assert snapshot.document_name == "target.txt"
-        assert snapshot.text == "owner answer"
-        assert snapshot.metadata_ == {"private": "owner answer"}
+        assert (
+            await read_text(
+                private_data_cipher,
+                snapshot.document_name,
+                StorageBinding(owner, str(revision.id), f"document:{target.id}:name"),
+            )
+            == "target.txt"
+        )
+        assert (
+            await read_text(
+                private_data_cipher,
+                snapshot.text,
+                StorageBinding(owner, str(revision.id), f"document:{target.id}:chunk:0:text"),
+            )
+            == "owner answer"
+        )
+        assert await read_json(
+            private_data_cipher,
+            snapshot.metadata_,
+            StorageBinding(owner, str(revision.id), f"document:{target.id}:chunk:0:metadata"),
+        ) == {"private": "owner answer"}
         assert list(snapshot.embedding) == embedding
         other_chunk = await session.scalar(sa.select(DocumentChunk).where(
             DocumentChunk.document_id == preserved.id))
         assert list(other_chunk.embedding) == embedding
     # Ordinary document deletion must still retain immutable published data;
     # only the account-erasure routine may remove it.
-    assert await SqlAlchemyDocumentRepository(sessions).delete_document(
+    assert await SqlAlchemyDocumentRepository(sessions, cipher=private_data_cipher).delete_document(
         document_id=target.id, user_id=owner,
     )
     assert [hit.text for hit in await repository.search_revision(
@@ -301,10 +375,12 @@ async def test_legacy_cleanup_failure_keeps_sql_retry_handles_and_blocks_new_wor
     original.write_bytes(b"unclassified original")
     storage = LocalUploadStorage(
         staging_root=tmp_path / "staging", legacy_root=legacy.parent, owner_access=owners,
+        cipher=private_data_cipher,
     )
     pipeline = IngestPipeline(
         parser=TextParser(), chunker=SplitChunker(), embedder=StaticFakeEmbedder(),
-        store=SqlAlchemyIngestStore(sessions), owner_access=owners,
+        store=SqlAlchemyIngestStore(sessions, cipher=private_data_cipher), owner_access=owners,
+        storage=storage,
     )
     worker = IngestWorker(pipeline, owner_access=owners, storage=storage)
     app = create_app(internal_server_key=KEY, metrics_enabled=False)
@@ -332,6 +408,7 @@ async def test_legacy_cleanup_failure_keeps_sql_retry_handles_and_blocks_new_wor
     cutover = LocalUploadStorage(
         staging_root=tmp_path / "staging", legacy_root=legacy.parent, owner_access=owners,
         clean_legacy_uploads_on_start=True,
+        cipher=private_data_cipher,
     )
     try:
         retry_worker = IngestWorker(pipeline, owner_access=owners, storage=cutover)
@@ -350,7 +427,8 @@ async def test_legacy_cleanup_failure_keeps_sql_retry_handles_and_blocks_new_wor
     ("owner", errno.EIO),
     ("owners", errno.EIO),
     ("owners", errno.EINVAL),
-])
+],
+)
 async def test_directory_sync_failure_retains_sql_retry_handles_until_durable_retry(
     database, tmp_path: Path, monkeypatch, boundary: str, error_number: int,
 ) -> None:
@@ -359,6 +437,7 @@ async def test_directory_sync_failure_retains_sql_retry_handles_until_durable_re
     preserved, other_revision = await seed(sessions, other, name="other.txt", text="other answer")
     storage = LocalUploadStorage(
         staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners,
+        cipher=private_data_cipher,
     )
     target_path = await storage.save(
         UploadFile(io.BytesIO(b"private original"), filename="private.txt"), user_id=owner,
@@ -384,7 +463,8 @@ async def test_directory_sync_failure_retains_sql_retry_handles_until_durable_re
 
     pipeline = IngestPipeline(
         parser=TextParser(), chunker=SplitChunker(), embedder=StaticFakeEmbedder(),
-        store=SqlAlchemyIngestStore(sessions), owner_access=owners,
+        store=SqlAlchemyIngestStore(sessions, cipher=private_data_cipher), owner_access=owners,
+        storage=storage,
     )
     worker = IngestWorker(pipeline, owner_access=owners, storage=storage)
     app = create_app(internal_server_key=KEY, metrics_enabled=False)
@@ -406,7 +486,7 @@ async def test_directory_sync_failure_retains_sql_retry_handles_until_durable_re
                     async with sessions() as session:
                         assert await session.get(Document, target.id) is not None
                         assert await session.get(KnowledgeRevision, revision.id) is not None
-                    assert other_path.read_bytes() == b"other original"
+                    assert other_path.read_bytes().startswith(b"port-openbao-upload-v1\n")
                 with pytest.raises(OwnerDataErased):
                     await owners.assert_active(owner)
             response = await client.delete(
@@ -415,7 +495,7 @@ async def test_directory_sync_failure_retains_sql_retry_handles_until_durable_re
             assert response.status_code == 200
             assert response.json()["data"] == {"userId": owner, "erased": True}
         assert not target_path.exists()
-        assert other_path.read_bytes() == b"other original"
+        assert other_path.read_bytes().startswith(b"port-openbao-upload-v1\n")
         async with sessions() as session:
             assert await session.get(Document, target.id) is None
             assert await session.get(KnowledgeRevision, revision.id) is None

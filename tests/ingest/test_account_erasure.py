@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.private_data_fixture import private_data_cipher
 
 import asyncio
 import errno
@@ -38,13 +39,15 @@ async def test_erasure_drains_only_owned_ingestion_and_rejects_late_queue(tmp_pa
     owners = MemoryOwnerAdmission()
     owner, other = str(uuid.uuid4()), str(uuid.uuid4())
     storage = LocalUploadStorage(
-        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners
+        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners,
+        cipher=private_data_cipher,
     )
     store = MemoryStore()
     embedder = BlockingEmbedder()
     pipeline = IngestPipeline(
         parser=TextParser(), chunker=SplitChunker(), embedder=embedder,
         store=store, owner_access=owners,
+        storage=storage,
     )
     worker = IngestWorker(pipeline, owner_access=owners, storage=storage)
     owned_id, queued_id, other_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -61,7 +64,9 @@ async def test_erasure_drains_only_owned_ingestion_and_rejects_late_queue(tmp_pa
         erasure = asyncio.create_task(worker.erase_user(owner))
         await asyncio.sleep(0)
         assert not erasure.done()
-        assert preserved.read_bytes() == b"other account"
+        assert b"other account" not in preserved.read_bytes()
+        async with storage.decrypted_path(preserved, user_id=other) as readable:
+            assert readable.read_bytes() == b"other account"
         embedder.release.set()
         await erasure
         await storage.erase_owner(owner)
@@ -90,22 +95,28 @@ async def test_owned_staging_cleanup_preserves_live_other_instance_and_cleans_cr
 ) -> None:
     owners = MemoryOwnerAdmission()
     root, legacy = tmp_path / "staging", tmp_path / "legacy"
-    first = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+    first = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
     owner, other = str(uuid.uuid4()), str(uuid.uuid4())
     target = await first.save(UploadFile(io.BytesIO(b"private"), filename="a.txt"), user_id=owner)
     preserved = await first.save(UploadFile(io.BytesIO(b"preserve"), filename="b.txt"), user_id=other)
-    second = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+    second = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
     try:
-        assert target.read_bytes() == b"private"
-        assert preserved.read_bytes() == b"preserve"
+        assert target.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"private" not in target.read_bytes()
+        assert preserved.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"preserve" not in preserved.read_bytes()
         owners.erased.add(owner)
         await second.erase_owner(owner)
         assert not target.exists()
-        assert preserved.read_bytes() == b"preserve"
+        assert preserved.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"preserve" not in preserved.read_bytes()
     finally:
         second.close()
         first.close()
-    restarted = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+    restarted = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
     try:
         assert not preserved.exists()
     finally:
@@ -118,7 +129,8 @@ async def test_startup_recovers_markerless_originals_without_touching_live_other
 ) -> None:
     owners = MemoryOwnerAdmission()
     root, legacy = tmp_path / "staging", tmp_path / "legacy"
-    live = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+    live = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
     owner, other = str(uuid.uuid4()), str(uuid.uuid4())
     preserved = await live.save(
         UploadFile(io.BytesIO(b"live other original"), filename="live.txt"), user_id=other,
@@ -130,10 +142,12 @@ async def test_startup_recovers_markerless_originals_without_touching_live_other
     original.write_bytes(b"markerless private original")
     recovered = None
     try:
-        recovered = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+        recovered = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+        )
         assert not original.exists()
         assert not abandoned.exists()
-        assert preserved.read_bytes() == b"live other original"
+        assert preserved.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"live other original" not in preserved.read_bytes()
     finally:
         if recovered is not None:
             recovered.close()
@@ -144,7 +158,8 @@ async def test_startup_recovers_markerless_originals_without_touching_live_other
 async def test_markerless_recovery_respects_active_owner_reader(tmp_path: Path) -> None:
     owners = MemoryOwnerAdmission()
     root, legacy = tmp_path / "staging", tmp_path / "legacy"
-    live = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+    live = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
     owner = str(uuid.uuid4())
     original = await live.save(
         UploadFile(io.BytesIO(b"active private original"), filename="active.txt"), user_id=owner,
@@ -156,10 +171,13 @@ async def test_markerless_recovery_respects_active_owner_reader(tmp_path: Path) 
         async with live.hold_owner(owner):
             recovered = LocalUploadStorage(
                 staging_root=root, legacy_root=legacy, owner_access=owners,
+                cipher=private_data_cipher,
             )
-            assert original.read_bytes() == b"active private original"
+            assert original.read_bytes().startswith(b"port-openbao-upload-v1\n")
+            assert b"active private original" not in original.read_bytes()
         recovered.close()
-        recovered = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+        recovered = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+        )
         assert not original.exists()
     finally:
         if recovered is not None:
@@ -191,9 +209,11 @@ def test_instance_marker_sync_failure_aborts_startup_and_allows_recovery(
         with pytest.raises(OSError, match="synthetic marker durability failure"):
             LocalUploadStorage(
                 staging_root=root, legacy_root=legacy, owner_access=MemoryOwnerAdmission(),
+                cipher=private_data_cipher,
             )
     recovered = LocalUploadStorage(
         staging_root=root, legacy_root=legacy, owner_access=MemoryOwnerAdmission(),
+        cipher=private_data_cipher,
     )
     try:
         for marker in failed_markers:
@@ -208,8 +228,10 @@ async def test_marker_removal_sync_failure_is_not_bypassed_by_empty_marker_retry
 ) -> None:
     owners = MemoryOwnerAdmission()
     root, legacy = tmp_path / "staging", tmp_path / "legacy"
-    live = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
-    abandoned = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+    live = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
+    abandoned = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
     owner, other = str(uuid.uuid4()), str(uuid.uuid4())
     target = await abandoned.save(
         UploadFile(io.BytesIO(b"crashed private original"), filename="private.txt"), user_id=owner,
@@ -236,12 +258,17 @@ async def test_marker_removal_sync_failure_is_not_bypassed_by_empty_marker_retry
             fault.setattr(os, "fsync", fail_marker_removal_sync)
             for _ in range(2):
                 with pytest.raises(OSError, match="synthetic marker removal durability failure"):
-                    LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+                    LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners,
+                        cipher=private_data_cipher,
+                    )
                 assert not target.exists()
                 assert not removed_marker.exists()
-                assert preserved.read_bytes() == b"live other original"
-        recovered = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
-        assert preserved.read_bytes() == b"live other original"
+                assert preserved.read_bytes().startswith(b"port-openbao-upload-v1\n")
+                assert b"live other original" not in preserved.read_bytes()
+        recovered = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+        )
+        assert preserved.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"live other original" not in preserved.read_bytes()
     finally:
         if recovered is not None:
             recovered.close()
@@ -270,22 +297,26 @@ def test_new_staging_ancestor_sync_failure_is_not_bypassed_on_retry(
                 LocalUploadStorage(
                     staging_root=root, legacy_root=tmp_path / "legacy",
                     owner_access=MemoryOwnerAdmission(),
+                    cipher=private_data_cipher,
                 )
     recovered = LocalUploadStorage(
         staging_root=root, legacy_root=tmp_path / "legacy", owner_access=MemoryOwnerAdmission(),
+        cipher=private_data_cipher,
     )
     recovered.close()
 
 
 @pytest.mark.asyncio
-async def test_legacy_staging_blocks_erasure_without_explicit_offline_cutover(tmp_path: Path) -> None:
+async def test_legacy_staging_blocks_erasure_without_explicit_offline_cutover(tmp_path: Path,
+) -> None:
     legacy = tmp_path / "legacy"
     abandoned = legacy / "rag-uploads-old-process"
     abandoned.mkdir(parents=True)
     original = abandoned / "sensitive.pdf"
     original.write_bytes(b"legacy original")
     storage = LocalUploadStorage(
-        staging_root=tmp_path / "staging", legacy_root=legacy, owner_access=MemoryOwnerAdmission()
+        staging_root=tmp_path / "staging", legacy_root=legacy, owner_access=MemoryOwnerAdmission(),
+        cipher=private_data_cipher,
     )
     try:
         with pytest.raises(LegacyUploadCleanupRequired, match="RAG_LEGACY_UPLOAD_CLEANUP_REQUIRED"):
@@ -296,6 +327,7 @@ async def test_legacy_staging_blocks_erasure_without_explicit_offline_cutover(tm
     cutover = LocalUploadStorage(
         staging_root=tmp_path / "staging", legacy_root=legacy, owner_access=MemoryOwnerAdmission(),
         clean_legacy_uploads_on_start=True,
+        cipher=private_data_cipher,
     )
     try:
         cutover.require_legacy_cleanup()
@@ -327,11 +359,13 @@ def test_legacy_cleanup_retry_still_requires_parent_durability(
                 LocalUploadStorage(
                     staging_root=root, legacy_root=legacy,
                     owner_access=MemoryOwnerAdmission(), clean_legacy_uploads_on_start=True,
+                    cipher=private_data_cipher,
                 )
         assert not abandoned.exists()
     recovered = LocalUploadStorage(
         staging_root=root, legacy_root=legacy,
         owner_access=MemoryOwnerAdmission(), clean_legacy_uploads_on_start=True,
+        cipher=private_data_cipher,
     )
     try:
         recovered.require_legacy_cleanup()
@@ -345,7 +379,8 @@ async def test_staging_cleanup_failure_is_not_reported_as_erased(tmp_path: Path,
     owners = MemoryOwnerAdmission()
     owner = str(uuid.uuid4())
     storage = LocalUploadStorage(
-        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners
+        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners,
+        cipher=private_data_cipher,
     )
     path = await storage.save(UploadFile(io.BytesIO(b"private"), filename="a.txt"), user_id=owner)
     original_unlink = Path.unlink
@@ -359,7 +394,8 @@ async def test_staging_cleanup_failure_is_not_reported_as_erased(tmp_path: Path,
     try:
         with pytest.raises(PermissionError, match="synthetic cleanup failure"):
             await storage.erase_owner(owner)
-        assert path.read_bytes() == b"private"
+        assert path.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"private" not in path.read_bytes()
     finally:
         storage.close()
 
@@ -368,8 +404,10 @@ async def test_staging_cleanup_failure_is_not_reported_as_erased(tmp_path: Path,
 async def test_owner_staging_erasure_drains_another_instances_active_reader(tmp_path: Path) -> None:
     owners = MemoryOwnerAdmission()
     root, legacy = tmp_path / "staging", tmp_path / "legacy"
-    first = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
-    second = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners)
+    first = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
+    second = LocalUploadStorage(staging_root=root, legacy_root=legacy, owner_access=owners, cipher=private_data_cipher
+    )
     owner, other = str(uuid.uuid4()), str(uuid.uuid4())
     target = await first.save(UploadFile(io.BytesIO(b"reading original"), filename="a.txt"), user_id=owner)
     preserved = await first.save(UploadFile(io.BytesIO(b"other original"), filename="b.txt"), user_id=other)
@@ -379,7 +417,8 @@ async def test_owner_staging_erasure_drains_another_instances_active_reader(tmp_
         async with first.hold_owner(owner):
             started.set()
             await release.wait()
-            assert target.read_bytes() == b"reading original"
+            assert target.read_bytes().startswith(b"port-openbao-upload-v1\n")
+            assert b"reading original" not in target.read_bytes()
 
     reader = asyncio.create_task(read_original())
     erasure = None
@@ -389,12 +428,14 @@ async def test_owner_staging_erasure_drains_another_instances_active_reader(tmp_
         erasure = asyncio.create_task(second.erase_owner(owner))
         await asyncio.sleep(0)
         assert not erasure.done()
-        assert target.read_bytes() == b"reading original"
+        assert target.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"reading original" not in target.read_bytes()
         release.set()
         await reader
         await erasure
         assert not target.exists()
-        assert preserved.read_bytes() == b"other original"
+        assert preserved.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"other original" not in preserved.read_bytes()
     finally:
         release.set()
         try:
@@ -407,16 +448,19 @@ async def test_owner_staging_erasure_drains_another_instances_active_reader(tmp_
 
 
 @pytest.mark.asyncio
-async def test_erasing_queued_owner_does_not_complete_another_owners_queue_join(tmp_path: Path) -> None:
+async def test_erasing_queued_owner_does_not_complete_another_owners_queue_join(tmp_path: Path,
+) -> None:
     owners = MemoryOwnerAdmission()
     owner, other = str(uuid.uuid4()), str(uuid.uuid4())
     storage = LocalUploadStorage(
         staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy", owner_access=owners,
+        cipher=private_data_cipher,
     )
     store = MemoryStore()
     pipeline = IngestPipeline(
         parser=TextParser(), chunker=SplitChunker(), embedder=StaticFakeEmbedder(dimensions=3),
         store=store, owner_access=owners,
+        storage=storage,
     )
     worker = IngestWorker(pipeline, owner_access=owners, storage=storage)
     target = await storage.save(UploadFile(io.BytesIO(b"cancel"), filename="a.txt"), user_id=owner)
@@ -437,7 +481,8 @@ async def test_erasing_queued_owner_does_not_complete_another_owners_queue_join(
         await worker.erase_user(owner)
         await asyncio.sleep(0)
         assert not joined.done()
-        assert preserved.read_bytes() == b"process"
+        assert preserved.read_bytes().startswith(b"port-openbao-upload-v1\n")
+        assert b"process" not in preserved.read_bytes()
         worker.start()
         await joined
         assert [chunk.text for chunk in store.chunks[other_id]] == ["process"]
