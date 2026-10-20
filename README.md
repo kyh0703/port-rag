@@ -130,10 +130,14 @@ authenticated owner's `?userId=...`, including POST and PATCH:
 - `POST /documents/webpages/discover` with `{url}` discovers at most 100 unique
   same-host/subdomain links. Navigation anchors are discovered but navigation
   text is not indexed. Discovery does not register documents.
-- `POST /documents/webpages` with `{name?, knowledgeKey, urls, autoSync?}` registers
+- `POST /documents/webpages` with `{name?, knowledgeKey?, urls, autoSync?}` registers
   one document containing 1–100 selected HTTP(S) URLs. It returns 201 with
   `status: processing` and durable `webpage.syncStatus: queued`; `autoSync`
   defaults to false. The worker never adds newly discovered URLs during sync.
+  Omitted `knowledgeKey` generates `knowledge_<uuid4 hex>`, as file uploads do.
+  Explicit valid keys are preserved; null, empty, or malformed keys are rejected.
+  Existing document keys are not changed. Missing, null, or blank names default
+  to the hostname of the first normalized URL; nonblank names are preserved.
 - `GET /documents/{id}/webpage` returns `{document, content}`. `content` is the last
   successfully indexed normalized full text, not an overlapping-chunk join.
 - `PATCH /documents/{id}/webpage` with `{autoSync}` enables/disables the 24-hour

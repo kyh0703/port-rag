@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
@@ -55,6 +56,7 @@ class WebpageRepository:
         if not 1 <= len(urls) <= MAX_URLS:
             raise WebpageFetchError("select between 1 and 100 webpage URLs")
         normalized_urls = list(dict.fromkeys(normalize_url(url) for url in urls))
+        display_name = name if name and name.strip() else urlsplit(normalized_urls[0]).hostname
         async with self._session_factory() as session:
             await lock_active_owner(session, user_id)
             document_id = uuid.uuid4()
@@ -62,7 +64,7 @@ class WebpageRepository:
                 id=document_id,
                 user_id=uuid.UUID(user_id), knowledge_key=knowledge_key,
                 name=await self._cipher.encrypt(
-                    name or normalized_urls[0],
+                    display_name,
                     StorageBinding(user_id, str(document_id), "document:name"),
                 ), mime="text/html", status=DocumentStatus.PROCESSING,
             )

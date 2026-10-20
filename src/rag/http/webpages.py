@@ -29,8 +29,11 @@ class DiscoveredWebpagesResponse(BaseModel):
 class RegisterWebpagesRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    name: str | None = Field(None, min_length=1, max_length=255)
-    knowledge_key: str = Field(alias="knowledgeKey", pattern=r"^[a-z][a-z0-9_]{0,127}$")
+    name: str | None = Field(None, max_length=255)
+    knowledge_key: str = Field(
+        default_factory=lambda: f"knowledge_{uuid.uuid4().hex}",
+        alias="knowledgeKey", pattern=r"^[a-z][a-z0-9_]{0,127}$",
+    )
     urls: list[Url] = Field(min_length=1, max_length=100)
     auto_sync: StrictBool = Field(False, alias="autoSync")
 
