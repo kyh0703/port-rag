@@ -7,6 +7,7 @@ import ipaddress
 import mimetypes
 import re
 import socket
+import unicodedata
 import zlib
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -17,6 +18,8 @@ import httpx
 MAX_URLS = 100
 MAX_PAGE_BYTES = 2 * 1024 * 1024
 FETCH_TIMEOUT = 20.0
+DISCOVERY_TIMEOUT = 30.0
+_DISCOVERY_CONCURRENCY = 4
 _NAT64_NETWORKS = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"))
 
 
@@ -41,34 +44,51 @@ def _public_address(value: str) -> bool:
                 and not any(address in network for network in _NAT64_NETWORKS))
 
 
-def normalize_url(url: str) -> str:
-    if not url or len(url) > 4096 or any(ord(char) < 33 or ord(char) == 127 for char in url):
+def _clean_url_reference(url: str) -> str:
+    url = url.strip(" ")
+    if not url or "\\" in url or any(ord(char) <= 32 or 127 <= ord(char) <= 159 for char in url):
         raise WebpageFetchError("invalid webpage URL")
+    return url
+
+
+def normalize_url(url: str) -> str:
+    url = _clean_url_reference(url)
+    bare = not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE)
+    if bare:
+        if url.startswith("//") or re.match(r"^https?:", url, re.IGNORECASE):
+            raise WebpageFetchError("invalid public HTTP webpage URL")
+        url = "https://" + url
     try:
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError
-        if parsed.username is not None or parsed.password is not None or "\\" in url:
+        if parsed.username is not None or parsed.password is not None or "%" in parsed.netloc:
             raise ValueError
-        hostname = parsed.hostname.encode("idna").decode("ascii").lower().rstrip(".")
-        if "%" in hostname or not hostname:
+        hostname = unicodedata.normalize("NFC", parsed.hostname.lower()).rstrip(".")
+        if not hostname:
             raise ValueError
         port = parsed.port
         if port is not None and port not in {80, 443}:
             raise ValueError
         try:
-            ipaddress.ip_address(hostname)
+            address = ipaddress.ip_address(hostname)
         except ValueError:
-            if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", hostname):
+            hostname = httpx.URL(host=hostname).raw_host.decode("ascii").rstrip(".")
+            if (not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", hostname)
+                    or (bare and "." not in hostname)):
                 raise ValueError
         else:
             if not _public_address(hostname):
                 raise WebpageFetchError("webpage address must be public")
+            hostname = address.compressed
         authority = f"[{hostname}]" if ":" in hostname else hostname
         if port is not None and port != (443 if parsed.scheme == "https" else 80):
             authority += f":{port}"
-        return urlunsplit((parsed.scheme, authority, parsed.path or "/", parsed.query, ""))
-    except (UnicodeError, ValueError) as exc:
+        normalized = urlunsplit((parsed.scheme, authority, parsed.path or "/", parsed.query, ""))
+        if len(normalized.encode("utf-8")) > 4096:
+            raise WebpageFetchError("webpage URL is too long")
+        return normalized
+    except (UnicodeError, ValueError, httpx.InvalidURL) as exc:
         if isinstance(exc, WebpageFetchError):
             raise
         raise WebpageFetchError("invalid public HTTP webpage URL") from exc
@@ -179,10 +199,13 @@ class SafeWebpageFetcher:
                         location = response.headers.get("location")
                         if not location:
                             raise WebpageFetchError("webpage redirect has no location")
-                        url = normalize_url(urljoin(url, location))
+                        url = normalize_url(urljoin(url, _clean_url_reference(location)))
                         continue
                     if response.status_code != 200:
                         raise WebpageFetchError(f"webpage returned HTTP {response.status_code}")
+                    if any(value.split(";", 1)[0].strip().lower() == "attachment"
+                           for value in response.headers.get_list("content-disposition")):
+                        raise WebpageFetchError("webpage must not be an attachment")
                     media_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
                     if media_type not in {"text/html", "application/xhtml+xml"}:
                         raise WebpageFetchError("webpage must return HTML")
@@ -222,26 +245,56 @@ class SafeWebpageFetcher:
     async def discover(self, url: str) -> list[str]:
         url = normalize_url(url)
         hostname = urlsplit(url).hostname
-        page = await self.fetch(url)
-        urls = [url]
-        seen = {url}
-        for link in page.links:
-            try:
-                candidate = normalize_url(urljoin(page.url, link))
-            except WebpageFetchError:
-                continue
-            parsed = urlsplit(candidate)
-            host = parsed.hostname
-            media_type, _ = mimetypes.guess_type(parsed.path)
-            # Download/index links are not HTML pages and otherwise make the
-            # default all-selected registration fail as a whole.
-            if media_type is not None and media_type not in {"text/html", "application/xhtml+xml"}:
-                continue
-            if host != hostname and not host.endswith(f".{hostname}"):
-                continue
-            if candidate not in seen:
-                seen.add(candidate)
-                urls.append(candidate)
-                if len(urls) == MAX_URLS:
-                    break
-        return urls
+        candidates = [url]
+        verified: set[str] = set()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + DISCOVERY_TIMEOUT
+        try:
+            async with asyncio.timeout(DISCOVERY_TIMEOUT):
+                page = await self.fetch(url)
+                if loop.time() >= deadline:
+                    raise TimeoutError
+                verified.add(url)
+                seen = {url}
+                for link in page.links:
+                    if len(candidates) == MAX_URLS or loop.time() >= deadline:
+                        break
+                    try:
+                        candidate = normalize_url(urljoin(page.url, _clean_url_reference(link)))
+                    except (ValueError, UnicodeError):
+                        continue
+                    parsed = urlsplit(candidate)
+                    host = parsed.hostname
+                    media_type, _ = mimetypes.guess_type(parsed.path)
+                    if media_type is not None and media_type not in {"text/html", "application/xhtml+xml"}:
+                        continue
+                    if host != hostname and not host.endswith(f".{hostname}"):
+                        continue
+                    if candidate not in seen:
+                        seen.add(candidate)
+                        candidates.append(candidate)
+
+                # Only root anchors are candidates. Four workers share this iterator;
+                # failed pages still consume one of the 100 verification slots.
+                pending = iter(candidates[1:])
+
+                async def verify() -> None:
+                    for candidate in pending:
+                        if loop.time() >= deadline:
+                            return
+                        try:
+                            await self.fetch(candidate)
+                        except WebpageFetchError:
+                            continue
+                        if loop.time() < deadline:
+                            verified.add(candidate)
+
+                async with asyncio.TaskGroup() as tasks:
+                    for _ in range(min(_DISCOVERY_CONCURRENCY, len(candidates) - 1)):
+                        tasks.create_task(verify())
+        except TimeoutError as exc:
+            if url not in verified:
+                raise WebpageFetchError("webpage discovery timed out") from exc
+        # TaskGroup drains cancellation before returning; incomplete candidates never
+        # enter verified, and completion order cannot change the selection order.
+        return [candidate for candidate in candidates if candidate in verified]

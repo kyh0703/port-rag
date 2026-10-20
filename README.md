@@ -127,9 +127,12 @@ it has no user data.
 All webpage routes use the existing internal-server authentication and the
 authenticated owner's `?userId=...`, including POST and PATCH:
 
-- `POST /documents/webpages/discover` with `{url}` discovers at most 100 unique
-  same-host/subdomain links. Navigation anchors are discovered but navigation
-  text is not indexed. Discovery does not register documents.
+- `POST /documents/webpages/discover` with `{url}` verifies at most 100 unique
+  root-anchor candidates on the same host/subdomains, with four concurrent
+  verifications and a shared 30-second deadline. Only completed, readable HTML
+  pages are returned, in original order; failed pages, attachments and unfinished
+  probes are excluded. Navigation anchors are discovered but navigation text is
+  not indexed. Discovery does not register documents.
 - `POST /documents/webpages` with `{name?, knowledgeKey, urls, autoSync?}` registers
   one document containing 1–100 selected HTTP(S) URLs. It returns 201 with
   `status: processing` and durable `webpage.syncStatus: queued`; `autoSync`
@@ -166,6 +169,14 @@ limited to 4 MiB. Script/style/navigation/hidden text is excluded. Only readable
 server-rendered HTML is supported: JavaScript-only pages fail explicitly with
 `webpage has no readable server-rendered text`, without title/description metadata
 fallbacks or browser rendering.
+
+Bare domains default to HTTPS. Hostnames use IDN normalization, trailing dots and
+default ports are removed, and fragments do not create separate candidates.
+Raw path/query Unicode, signed percent-encoding spelling and pagination values
+are preserved. The normalized URL must fit 4096 UTF-8 bytes; an oversized child
+is skipped without failing the valid root. HTML attachments are not indexable.
+This parsing update does not change the existing `20261005_0008` schema, owner
+encryption, registration payload or exact-list synchronization contract.
 
 Revision creation freezes ordinary file chunks exactly as before. Webpages use
 the dedicated immutable `knowledge_revision_webpages` membership table instead
