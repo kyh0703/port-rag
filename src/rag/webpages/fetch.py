@@ -98,60 +98,95 @@ async def resolve_addresses(host: str, port: int) -> list:
     return await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
 
 
+@dataclass
+class _HTMLContext:
+    tag: str
+    skip_text: bool
+    skip_links: bool
+    in_main: bool
+    in_section: bool
+
+
 class _TextParser(HTMLParser):
-    _ignored = {"head", "title", "script", "style", "nav", "noscript", "template", "svg", "canvas"}
-    _blocks = {"p", "div", "section", "article", "main", "h1", "h2", "h3", "h4", "h5", "h6",
+    _inert = {"head", "title", "script", "style", "noscript", "template", "svg", "canvas"}
+    _chrome_roles = {"navigation", "banner", "contentinfo"}
+    _sections = {"article", "section", "aside"}
+    _blocks = {"p", "div", "section", "article", "main", "header", "footer",
+               "h1", "h2", "h3", "h4", "h5", "h6",
                "br", "li", "ul", "ol", "tr", "table", "blockquote", "pre", "hr"}
     _void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
              "param", "source", "track", "wbr"}
+    _hidden_style = re.compile(
+        r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)"
+        r"\s*(?:!\s*important\s*)?(?:;|$)",
+        re.IGNORECASE,
+    )
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.text: list[str] = []
+        self.main_text: list[str] = []
+        self.has_main = False
         self.links: list[str] = []
-        self.hidden_stack: list[str] = []
+        self._stack = [_HTMLContext("", False, False, False, False)]
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
-        # Navigation text is excluded, but real navigation links remain discoverable.
-        if (tag == "a" and attributes.get("href") and len(self.links) < 10000
-                and not any(parent in self._ignored - {"nav"} for parent in self.hidden_stack)):
+        parent = self._stack[-1]
+        role = (attributes.get("role") or "").strip().lower()
+        is_main = tag == "main" or role == "main"
+        skip_links = parent.skip_links or tag in self._inert
+        # Page chrome is not content; headers scoped to articles/sections still are.
+        skip_text = (
+            parent.skip_text or skip_links or tag == "nav" or role in self._chrome_roles
+            or (tag in {"header", "footer"} and not parent.in_section)
+            or "hidden" in attributes
+            or (attributes.get("aria-hidden") or "").strip().lower() == "true"
+            or bool(self._hidden_style.search(attributes.get("style") or ""))
+        )
+        context = _HTMLContext(
+            tag, skip_text, skip_links,
+            parent.in_main or is_main,
+            parent.in_section or is_main or tag in self._sections,
+        )
+        # Real links in menus (including collapsed menus) remain discoverable.
+        if tag == "a" and attributes.get("href") and len(self.links) < 10000 and not skip_links:
             self.links.append(attributes["href"])
-        hidden = (tag in self._ignored or "hidden" in attributes
-                  or attributes.get("aria-hidden", "").lower() == "true")
-        if self.hidden_stack or hidden:
-            if tag not in self._void:
-                if len(self.hidden_stack) >= 256:
-                    raise WebpageFetchError("webpage HTML nesting is too deep")
-                self.hidden_stack.append(tag)
-            return
-        if tag in self._blocks:
-            self.text.append("\n")
+        if is_main and not skip_text:
+            self.has_main = True
+        if not skip_text and tag in self._blocks:
+            (self.main_text if context.in_main else self.text).append("\n")
+        if tag not in self._void:
+            if len(self._stack) >= 257:
+                raise WebpageFetchError("webpage HTML nesting is too deep")
+            self._stack.append(context)
 
-    def handle_startendtag(self, tag, attrs):
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
         if tag not in self._void:
             self.handle_endtag(tag)
 
-    def handle_endtag(self, tag):
-        if self.hidden_stack:
-            if tag in self.hidden_stack:
-                index = len(self.hidden_stack) - 1 - self.hidden_stack[::-1].index(tag)
-                del self.hidden_stack[index:]
-            return
-        if tag in self._blocks:
-            self.text.append("\n")
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self._stack) - 1, 0, -1):
+            context = self._stack[index]
+            if context.tag == tag:
+                if not context.skip_text and tag in self._blocks:
+                    (self.main_text if context.in_main else self.text).append("\n")
+                del self._stack[index:]
+                break
 
-    def handle_data(self, data):
-        if not self.hidden_stack:
-            self.text.append(data.replace("\x00", ""))
+    def handle_data(self, data: str) -> None:
+        context = self._stack[-1]
+        if not context.skip_text:
+            (self.main_text if context.in_main else self.text).append(data.replace("\x00", ""))
 
 
 def parse_html(url: str, html: str) -> WebpagePage:
     parser = _TextParser()
     parser.feed(html)
     parser.close()
-    text = "\n".join(line for raw in "".join(parser.text).splitlines()
+    content = parser.main_text if parser.has_main else parser.text
+    text = "\n".join(line for raw in "".join(content).splitlines()
                      if (line := " ".join(raw.split())))
     if not text:
         raise WebpageFetchError("webpage has no readable server-rendered text")

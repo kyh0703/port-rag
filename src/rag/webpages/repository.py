@@ -19,7 +19,7 @@ from rag.ingest.types import IngestChunk
 from rag.security.owner_erasure import OwnerDataErased, lock_active_owner
 from rag.webpages.fetch import MAX_URLS, WebpageFetchError, normalize_url
 
-from rag.security.private_data import PrivateDataCipher, StorageBinding, encrypt_json, read_text
+from rag.security.private_data import PrivateDataCipher, StorageBinding, encrypt_json, read_json, read_text
 
 SYNC_INTERVAL = timedelta(hours=24)
 CLAIM_LEASE = timedelta(minutes=15)
@@ -33,6 +33,21 @@ class SyncConflict(ValueError):
 class WebpageDetail:
     document: DocumentRecord
     content: str
+
+
+@dataclass(frozen=True)
+class WebpageChunk:
+    seq: int
+    text: str
+    source_url: str
+
+
+@dataclass(frozen=True)
+class WebpageChunks:
+    document_id: uuid.UUID
+    user_id: str
+    chunks: list[WebpageChunk]
+    total: int
 
 
 @dataclass(frozen=True)
@@ -112,6 +127,44 @@ class WebpageRepository:
                 return None
             document, page = row
             return await self._detail(document, page)
+
+    async def get_chunks(self, *, document_id: uuid.UUID, user_id: str,
+                         offset: int, limit: int) -> WebpageChunks | None:
+        async with self._session_factory() as session:
+            await lock_active_owner(session, user_id)
+            # Hold publication's row lock so count and page describe one stored version.
+            owned_page = await session.scalar(
+                sa.select(DocumentWebpage.document_id)
+                .join(Document, Document.id == DocumentWebpage.document_id)
+                .where(Document.id == document_id, Document.user_id == uuid.UUID(user_id))
+                .with_for_update(read=True)
+            )
+            if owned_page is None:
+                return None
+            total = await session.scalar(sa.select(sa.func.count()).select_from(DocumentChunk)
+                                         .where(DocumentChunk.document_id == document_id))
+            rows = (await session.execute(
+                sa.select(DocumentChunk.seq, DocumentChunk.text, DocumentChunk.metadata_)
+                .where(DocumentChunk.document_id == document_id)
+                .order_by(DocumentChunk.seq).offset(offset).limit(limit)
+            )).all()
+            chunks = []
+            for row in rows:
+                text = await read_text(
+                    self._cipher, row.text,
+                    StorageBinding(user_id, str(document_id), f"chunk:{row.seq}:text"),
+                )
+                metadata = await read_json(
+                    self._cipher, row.metadata_,
+                    StorageBinding(user_id, str(document_id), f"chunk:{row.seq}:metadata"),
+                )
+                chunks.append(WebpageChunk(
+                    seq=row.seq, text=text,
+                    source_url=metadata.get("source_url", metadata.get("url", "")),
+                ))
+            return WebpageChunks(
+                document_id=document_id, user_id=user_id, chunks=chunks, total=total,
+            )
 
     async def enqueue(self, *, document_id: uuid.UUID, user_id: str) -> WebpageDetail | None:
         async with self._session_factory() as session:

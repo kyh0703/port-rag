@@ -38,6 +38,30 @@ def html(body):
     return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
 
 
+async def test_discovery_follows_real_site_navigation_but_never_inert_template_links(public_dns):
+    requested = []
+
+    def respond(request):
+        requested.append(request.url.path)
+        if request.url.path == "/":
+            return html("""
+                <header><nav><a href="/guide">Guide</a></nav><a href="/en/">En</a>
+                    <div hidden><a href="/products">Collapsed menu</a></div></header>
+                <div role="navigation"><a href="/support">Support</a></div>
+                <template><a href="/fake-template">Fake</a></template>
+                <script type="text/template"><a href="/fake-script">Fake</a></script>
+                <main><h1>Root content</h1></main>
+            """)
+        return html("<main>Readable destination</main>")
+
+    urls = await SafeWebpageFetcher(transport=httpx.MockTransport(respond)).discover("example.com")
+    assert urls == [
+        "https://example.com/", "https://example.com/guide", "https://example.com/en/",
+        "https://example.com/products", "https://example.com/support",
+    ]
+    assert requested == ["/", "/guide", "/en/", "/products", "/support"]
+
+
 async def test_discovery_verifies_each_candidate_and_isolates_failures(public_dns):
     requested = []
     candidates = ["missing", "offline", "pdf", "empty", "attachment", "good", "rebound"]

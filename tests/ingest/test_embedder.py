@@ -120,10 +120,14 @@ async def test_credential_failure_never_uses_environment_or_fake_vectors(
     with caplog.at_level(logging.DEBUG), pytest.raises(EmbeddingError) as error:
         await embedder.embed_query("query")
     assert requests == []
+    assert error.value.code == "credential_unavailable"
+    assert str(error.value) == "Embedding credentials are unavailable. Contact an administrator."
     assert error.value.__cause__ is None
     assert error.value.__context__ is None
     assert ADMIN_KEY not in str(error.value)
     assert ADMIN_KEY not in caplog.text
+    assert INTERNAL_KEY not in caplog.text
+    assert ADMIN_KEY not in "".join(traceback.format_exception(error.value))
 
 
 async def test_internal_redirect_does_not_forward_shared_secret(make_embedder):
@@ -140,7 +144,7 @@ async def test_internal_redirect_does_not_forward_shared_secret(make_embedder):
     assert urls == ["http://api.test/api/v1/internal/rag/embedding-credential"]
 
 
-async def test_network_failure_is_safe_and_does_not_reuse_previous_key(make_embedder):
+async def test_network_failure_is_safe_and_does_not_reuse_previous_key(make_embedder, caplog):
     available = True
     openai_calls = []
 
@@ -156,24 +160,111 @@ async def test_network_failure_is_safe_and_does_not_reuse_previous_key(make_embe
     embedder, _, _ = make_embedder(internal, openai, max_attempts=1)
     assert await embedder.embed_query("first") == [0.25, 0.75]
     available = False
-    with pytest.raises(EmbeddingError) as error:
+    with caplog.at_level(logging.DEBUG), pytest.raises(EmbeddingError) as error:
         await embedder.embed_query("second")
     assert len(openai_calls) == 1
-    assert error.value.__context__ is None
-    assert ADMIN_KEY not in "".join(traceback.format_exception(error.value))
-
-
-async def test_upstream_key_echo_is_not_exposed_in_exceptions_or_logs(make_embedder, caplog):
-    def openai(request):
-        return httpx.Response(401, json={"error": {"message": f"Invalid API key: {ADMIN_KEY}"}})
-
-    embedder, _, _ = make_embedder(lambda request: credential_response(), openai, max_attempts=1)
-    with caplog.at_level(logging.DEBUG), pytest.raises(EmbeddingError) as error:
-        await embedder.embed_query("query")
-    assert error.value.__cause__ is None
+    assert error.value.code == "credential_unavailable"
     assert error.value.__context__ is None
     assert ADMIN_KEY not in "".join(traceback.format_exception(error.value))
     assert ADMIN_KEY not in caplog.text
+    assert INTERNAL_KEY not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("status_code", "code", "message"),
+    [
+        (
+            401,
+            "authentication_failed",
+            "Embedding provider authentication failed. "
+            "Contact an administrator to check the API key.",
+        ),
+        (
+            403,
+            "permission_denied",
+            "Embedding provider access was denied. "
+            "Contact an administrator to check permissions.",
+        ),
+        (
+            429,
+            "rate_limit_exceeded",
+            "Embedding provider rate limit or quota was exceeded. Please try again later.",
+        ),
+        (
+            500,
+            "provider_unavailable",
+            "Embedding provider is temporarily unavailable. Please try again later.",
+        ),
+        (
+            503,
+            "provider_unavailable",
+            "Embedding provider is temporarily unavailable. Please try again later.",
+        ),
+        (
+            400,
+            "request_failed",
+            "Embedding request failed. Please try again later.",
+        ),
+    ],
+)
+async def test_upstream_status_has_safe_reason_without_retaining_key_echo(
+    make_embedder, caplog, status_code, code, message
+):
+    attempts = 0
+    raw_message = f"Invalid API key: {ADMIN_KEY}; https://provider.test/private"
+
+    def openai(request):
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(status_code, json={"error": {"message": raw_message}})
+
+    embedder, _, _ = make_embedder(
+        lambda request: credential_response(), openai, max_attempts=3
+    )
+    with caplog.at_level(logging.DEBUG), pytest.raises(EmbeddingError) as error:
+        await embedder.embed_query("query")
+    assert attempts == 3
+    assert error.value.code == code
+    assert str(error.value) == message
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert ADMIN_KEY not in "".join(traceback.format_exception(error.value))
+    assert ADMIN_KEY not in repr(vars(error.value))
+    assert ADMIN_KEY not in caplog.text
+    assert raw_message not in caplog.text
+
+
+@pytest.mark.parametrize("exception_type", [httpx.ConnectError, httpx.ReadTimeout])
+async def test_provider_network_failure_does_not_log_upstream_exception_or_traceback(
+    make_embedder, caplog, exception_type
+):
+    attempts = 0
+    raw_message = f"Provider unavailable: {ADMIN_KEY}; https://provider.test/private"
+
+    def openai(request):
+        nonlocal attempts
+        attempts += 1
+        raise exception_type(raw_message, request=request)
+
+    embedder, _, _ = make_embedder(
+        lambda request: credential_response(), openai, max_attempts=3
+    )
+    # Isolate application handling from the SDK's own opt-in debug tracebacks.
+    with (
+        caplog.at_level(logging.DEBUG),
+        caplog.at_level(logging.WARNING, logger="openai"),
+        pytest.raises(EmbeddingError) as error,
+    ):
+        await embedder.embed_query("query")
+    assert attempts == 3
+    assert error.value.code == "provider_unavailable"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    assert ADMIN_KEY not in "".join(traceback.format_exception(error.value))
+    assert ADMIN_KEY not in repr(vars(error.value))
+    assert ADMIN_KEY not in caplog.text
+    assert raw_message not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 async def test_batch_retry_fetches_current_key_and_closes_both_http_clients(make_embedder):

@@ -4,15 +4,48 @@ from __future__ import annotations
 
 import asyncio
 from time import perf_counter
+from typing import Literal
 
 import httpx
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 
 from rag.metrics import Metrics
 
 
+EmbeddingErrorCode = Literal[
+    "authentication_failed",
+    "permission_denied",
+    "rate_limit_exceeded",
+    "provider_unavailable",
+    "credential_unavailable",
+    "request_failed",
+]
+_ERROR_MESSAGES: dict[EmbeddingErrorCode, str] = {
+    "authentication_failed": (
+        "Embedding provider authentication failed. "
+        "Contact an administrator to check the API key."
+    ),
+    "permission_denied": (
+        "Embedding provider access was denied. "
+        "Contact an administrator to check permissions."
+    ),
+    "rate_limit_exceeded": (
+        "Embedding provider rate limit or quota was exceeded. Please try again later."
+    ),
+    "provider_unavailable": (
+        "Embedding provider is temporarily unavailable. Please try again later."
+    ),
+    "credential_unavailable": "Embedding credentials are unavailable. Contact an administrator.",
+    "request_failed": "Embedding request failed. Please try again later.",
+}
+
+
 class EmbeddingError(RuntimeError):
     """Safe embedding failure that can be persisted or returned to callers."""
+
+    def __init__(self, code: EmbeddingErrorCode) -> None:
+        super().__init__(_ERROR_MESSAGES[code])
+        self.code = code
 
 
 class InternalEmbeddingCredentialProvider:
@@ -46,7 +79,7 @@ class InternalEmbeddingCredentialProvider:
         except Exception:
             pass
         # Raise outside the handler: the original exception may contain credentials.
-        raise EmbeddingError("Embedding credential unavailable")
+        raise EmbeddingError("credential_unavailable")
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -102,13 +135,31 @@ class OpenAIEmbedder:
 
     async def _embed_batch_with_retry(self, texts: list[str]) -> list[list[float]]:
         delay = self._initial_backoff_seconds
+        code: EmbeddingErrorCode = "request_failed"
         for attempt in range(1, self._max_attempts + 1):
             try:
                 response = await self._client.embeddings.create(model=self._model, input=texts)
                 return [item.embedding for item in response.data]
+            except EmbeddingError as exc:
+                code = exc.code
+            except APIStatusError as exc:
+                status_code = exc.status_code
+                if status_code == 401:
+                    code = "authentication_failed"
+                elif status_code == 403:
+                    code = "permission_denied"
+                elif status_code == 429:
+                    code = "rate_limit_exceeded"
+                elif 500 <= status_code < 600:
+                    code = "provider_unavailable"
+                else:
+                    code = "request_failed"
+            except APIConnectionError:
+                code = "provider_unavailable"
             except Exception:
-                if attempt < self._max_attempts:
-                    await asyncio.sleep(delay)
-                    delay *= 2
-        # Do not retain upstream exceptions: OpenAI errors can echo the API key.
-        raise EmbeddingError("Embedding request failed")
+                code = "request_failed"
+            if attempt < self._max_attempts:
+                await asyncio.sleep(delay)
+                delay *= 2
+        # Raise outside handlers without retaining upstream responses or credentials.
+        raise EmbeddingError(code)

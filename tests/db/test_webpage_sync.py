@@ -328,3 +328,30 @@ async def test_embedding_failure_cannot_replace_previously_ready_content(webpage
     assert detail.document.webpage.sync_status == "failed"
     assert detail.document.webpage.sync_error == "webpage synchronization failed"
     assert [chunk.id for chunk in await chunks(sessions, doc.id)] == [chunk.id for chunk in before]
+
+
+async def test_chunk_preview_decrypts_pages_without_exposing_another_owner(webpage_database):
+    sessions, _, (owner, other_owner) = webpage_database
+    repo = WebpageRepository(sessions, cipher=private_data_cipher)
+    source = PageSource()
+    source.text = "제품 설명\n" + "가나다라 " * 800
+    document = await register(repo, owner)
+    await WebpageWorker(
+        repository=repo, fetcher=source, embedder=Embedder(), cipher=private_data_cipher,
+    ).run_once()
+
+    page = await repo.get_chunks(
+        document_id=document.id, user_id=owner, offset=1, limit=1,
+    )
+    assert page.total == 3
+    assert [(chunk.seq, chunk.text, chunk.source_url) for chunk in page.chunks] == [
+        (1, source.text[1440:3040].strip(), "https://example.com/"),
+    ]
+    empty_page = await repo.get_chunks(
+        document_id=document.id, user_id=owner, offset=3, limit=1,
+    )
+    assert empty_page.total == 3
+    assert empty_page.chunks == []
+    assert await repo.get_chunks(
+        document_id=document.id, user_id=other_owner, offset=0, limit=20,
+    ) is None

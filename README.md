@@ -143,6 +143,12 @@ authenticated owner's `?userId=...`, including POST and PATCH:
   to the hostname of the first normalized URL; nonblank names are preserved.
 - `GET /documents/{id}/webpage` returns `{document, content}`. `content` is the last
   successfully indexed normalized full text, not an overlapping-chunk join.
+- `GET /documents/{id}/webpage/chunks?offset=0&limit=20` returns the actual stored
+  chunks, ordered by `seq`, as `{documentId, userId, chunks: [{seq, text, sourceUrl}], total}`.
+  The owner query and erasure admission apply before any decryption. `offset`
+  must be nonnegative; `limit` is 1–100. Count and page share publication's row
+  lock, and reads do not select or expose embedding vectors. The API proxy
+  validates the internal owner/document identifiers and returns `{chunks, total}`.
 - `PATCH /documents/{id}/webpage` with `{autoSync}` enables/disables the 24-hour
   schedule. `POST /documents/{id}/sync` durably queues a manual attempt and returns
   202; an already queued/running attempt returns 409. Poll detail/list for completion.
@@ -163,14 +169,23 @@ deadline. Account erasure cancels and drains the local webpage worker before
 acknowledging data removal. Other workers recheck owner/claim admission before
 each page and embedding step and cannot publish after the durable erasure fence.
 
+Embedding failures persist fixed, credential-free reasons for authentication
+(401), permissions (403), quota/rate limits (429), unavailable credentials,
+provider connectivity/5xx, and other request failures. Upstream response text
+and exception chains are discarded; unexpected webpage failures log only the
+exception class. Existing retries and last-successful-content preservation remain.
+
 Fetching validates all DNS answers and pins one public address for each redirect
 hop while preserving the original HTTP Host and TLS verification hostname.
 Credentials, non-HTTP schemes, private/reserved addresses, and non-web ports are
 rejected; proxy environment settings and cross-hop cookies are not used. Each
 fetch has a 20-second total deadline, at most five redirects, and a 2 MiB wire and
 decoded-body limit (identity/gzip/deflate); combined normalized document text is
-limited to 4 MiB. Script/style/navigation/hidden text is excluded. Only readable
-server-rendered HTML is supported: JavaScript-only pages fail explicitly with
+limited to 4 MiB. Visible `main` / `role="main"` content is preferred; documents
+without it use body/fragment text. Page-level headers/footers, navigation landmarks,
+inert elements and explicitly hidden text are excluded; article/section headings
+remain. Real menu links are still discoverable. Only readable server-rendered HTML
+is supported: JavaScript-only pages fail explicitly with
 `webpage has no readable server-rendered text`, without title/description metadata
 fallbacks or browser rendering.
 

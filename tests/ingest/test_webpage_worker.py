@@ -2,9 +2,13 @@ from __future__ import annotations
 from tests.private_data_fixture import private_data_cipher
 
 import asyncio
+import logging
 import uuid
 from unittest.mock import AsyncMock
 
+import pytest
+
+from rag.ingest.embedder import EmbeddingError
 from rag.webpages.fetch import WebpagePage
 from rag.webpages.repository import WebpageClaim
 from rag.webpages.worker import WebpageWorker
@@ -74,3 +78,81 @@ async def test_fenced_remote_claim_stops_before_another_external_request():
     assert fetcher.fetch.await_count == 1
     repository.finish.assert_not_awaited()
     embedder.embed_texts.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        (
+            "authentication_failed",
+            "Embedding provider authentication failed. "
+            "Contact an administrator to check the API key.",
+        ),
+        (
+            "permission_denied",
+            "Embedding provider access was denied. "
+            "Contact an administrator to check permissions.",
+        ),
+        (
+            "rate_limit_exceeded",
+            "Embedding provider rate limit or quota was exceeded. Please try again later.",
+        ),
+        (
+            "provider_unavailable",
+            "Embedding provider is temporarily unavailable. Please try again later.",
+        ),
+        (
+            "credential_unavailable",
+            "Embedding credentials are unavailable. Contact an administrator.",
+        ),
+    ],
+)
+async def test_embedding_failure_preserves_previous_chunks_and_persists_safe_reason(
+    code, message
+):
+    repository, fetcher, embedder = AsyncMock(), AsyncMock(), AsyncMock()
+    repository.claim_is_current.return_value = True
+    fetcher.fetch.return_value = WebpagePage(
+        url="https://example.com/one", text="Useful text", links=[]
+    )
+    embedder.embed_texts.side_effect = EmbeddingError(code)
+    worker = WebpageWorker(
+        repository=repository, fetcher=fetcher, embedder=embedder, cipher=private_data_cipher
+    )
+    claim = make_claim()
+
+    await worker.process(claim)
+
+    repository.fail.assert_awaited_once_with(claim, message)
+    repository.finish.assert_not_awaited()
+
+
+@pytest.mark.parametrize("exception_type", [ValueError, RuntimeError])
+@pytest.mark.parametrize("failure_stage", ["fetch", "embed"])
+async def test_unexpected_failure_logs_only_exception_class_and_preserves_previous_chunks(
+    caplog, exception_type, failure_stage
+):
+    repository, fetcher, embedder = AsyncMock(), AsyncMock(), AsyncMock()
+    repository.claim_is_current.return_value = True
+    fetcher.fetch.return_value = WebpagePage(
+        url="https://example.com/one", text="Useful text", links=[]
+    )
+    raw_message = "secret sk-private-provider-key https://provider.test/private"
+    if failure_stage == "fetch":
+        fetcher.fetch.side_effect = exception_type(raw_message)
+    else:
+        embedder.embed_texts.side_effect = exception_type(raw_message)
+    worker = WebpageWorker(
+        repository=repository, fetcher=fetcher, embedder=embedder, cipher=private_data_cipher
+    )
+    claim = make_claim()
+
+    with caplog.at_level(logging.WARNING, logger="rag.webpages.worker"):
+        await worker.process(claim)
+
+    repository.fail.assert_awaited_once_with(claim, "webpage synchronization failed")
+    repository.finish.assert_not_awaited()
+    assert exception_type.__name__ in caplog.text
+    assert "sk-private-provider-key" not in caplog.text
+    assert "https://provider.test/private" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

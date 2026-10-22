@@ -49,6 +49,19 @@ class WebpageDetailResponse(BaseModel):
     content: str
 
 
+class WebpageChunkResponse(BaseModel):
+    seq: int
+    text: str
+    source_url: str = Field(alias="sourceUrl")
+
+
+class WebpageChunksResponse(BaseModel):
+    document_id: uuid.UUID = Field(alias="documentId")
+    user_id: str = Field(alias="userId")
+    chunks: list[WebpageChunkResponse]
+    total: int
+
+
 def _detail(detail: WebpageDetail | None) -> WebpageDetailResponse:
     if detail is None:
         raise HTTPException(status_code=404, detail="webpage document not found")
@@ -93,6 +106,28 @@ def create_webpages_router(*, repository: WebpageRepository, fetcher: SafeWebpag
         response = _detail(await repository.get(document_id=document_id, user_id=str(user_id)))
         await owner_access.assert_active(str(user_id))
         return ok(response)
+
+    @router.get("/documents/{document_id}/webpage/chunks",
+                response_model=ApiResponse[WebpageChunksResponse],
+                response_model_exclude={"error"})
+    async def get_webpage_chunks(
+        document_id: uuid.UUID, user_id: UserIdQuery,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ):
+        await owner_access.assert_active(str(user_id))
+        page = await repository.get_chunks(
+            document_id=document_id, user_id=str(user_id), offset=offset, limit=limit,
+        )
+        if page is None:
+            raise HTTPException(status_code=404, detail="webpage document not found")
+        await owner_access.assert_active(str(user_id))
+        return ok(WebpageChunksResponse(
+            documentId=page.document_id, userId=page.user_id, total=page.total,
+            chunks=[WebpageChunkResponse(
+                seq=chunk.seq, text=chunk.text, sourceUrl=chunk.source_url,
+            ) for chunk in page.chunks],
+        ))
 
     @router.patch("/documents/{document_id}/webpage", response_model=ApiResponse[WebpageDetailResponse],
                   response_model_exclude={"error"})

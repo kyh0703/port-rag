@@ -34,6 +34,72 @@ def test_extracts_server_html_without_script_style_navigation_or_metadata():
         parse_html("https://example.com/", "<head><title>Metadata only</title></head><script>app()</script>")
 
 
+@pytest.mark.parametrize(("opening", "closing"), [
+    ("<main>", "</main>"),
+    ('<div role="main">', "</div>"),
+])
+def test_prefers_main_content_without_losing_its_headings(opening, closing):
+    page = parse_html("https://example.com/", f"""
+        <body><p>Shared promotion before the content</p>
+        {opening}
+            <header><h1>Product guide</h1></header>
+            <article><header><h2>Installation</h2></header><p>Install the product.</p></article>
+        {closing}
+        <p>Shared promotion after the content</p></body>
+    """)
+    assert page.text == "Product guide\nInstallation\nInstall the product."
+
+
+def test_body_fallback_removes_site_chrome_but_preserves_article_and_section_headers():
+    page = parse_html("https://example.com/", """
+        <body><header><a href="/">Kr</a><a href="/en/">En</a></header>
+        <div role="banner">Company slogan</div>
+        <div role="navigation"><a href="/products">Global products menu</a></div>
+        <article><header><h1>Release notes</h1><p>Published today</p></header>
+            <section><header><h2>New features</h2></header><p>Useful product details.</p></section>
+        </article>
+        <footer>Shared copyright</footer><div role="contentinfo">Site contact information</div>
+        </body>
+    """)
+    assert page.text == "Release notes\nPublished today\nNew features\nUseful product details."
+
+
+@pytest.mark.parametrize("role", ["navigation", "banner", "contentinfo"])
+def test_main_content_excludes_explicit_site_landmarks(role):
+    page = parse_html("https://example.com/", f"""
+        <main><h1>Useful guide</h1><div role="{role}"><p>Shared site information</p></div>
+        <p>Actual instructions</p></main>
+    """)
+    assert page.text == "Useful guide\nActual instructions"
+
+
+@pytest.mark.parametrize("attributes", [
+    "hidden",
+    'aria-hidden="true"',
+    'aria-hidden=" TRUE "',
+    'style="display:none"',
+    'style="color: red; DISPLAY : NoNe !important; width: 10px"',
+    'style="visibility: hidden;"',
+    'style="color: red; VISIBILITY : HIDDEN !important"',
+])
+def test_hidden_subtrees_never_contribute_text_or_displace_body_fallback(attributes):
+    page = parse_html("https://example.com/", f"""
+        <body><div {attributes}><main><h1>Hidden duplicate</h1><p>Hidden text</p></main></div>
+        <article><h1>Visible guide</h1><p>Visible details</p></article></body>
+    """)
+    assert page.text == "Visible guide\nVisible details"
+
+
+@pytest.mark.parametrize("html", [
+    "<head><title>Not content</title></head><header>Kr En</header><footer>Copyright</footer>",
+    '<head><title>Not content</title></head><main><div style="display:none">Hidden</div></main>',
+    "<body><p>Shared promotion</p><main><nav>Menu only</nav></main></body>",
+])
+def test_no_readable_content_raises_without_metadata_or_chrome_fallback(html):
+    with pytest.raises(WebpageFetchError, match="readable"):
+        parse_html("https://example.com/", html)
+
+
 async def test_pins_validated_address_preserving_host_and_tls_hostname(monkeypatch):
     resolver = AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))])
     monkeypatch.setattr("rag.webpages.fetch.resolve_addresses", resolver)
@@ -103,13 +169,18 @@ async def test_discovery_returns_only_unique_same_host_or_subdomain_links(monkey
     ]
 
 
-def test_discovery_keeps_navigation_links_but_not_navigation_or_template_text():
+def test_discovery_keeps_real_navigation_links_without_template_or_script_links():
     page = parse_html("https://example.com/", '''
-        <nav><a href="/docs">Navigation</a></nav>
-        <template><a href="/fake">Fake</a></template><main>Actual page content</main>
+        <header><nav><a href="/docs">Navigation</a></nav><a href="/en/">En</a>
+            <div hidden><nav><a href="/expanded">Collapsed navigation</a></nav></div>
+        </header>
+        <div role="navigation"><a href="/products">Products</a></div>
+        <template><nav><a href="/fake-template">Fake</a></nav></template>
+        <script type="text/template"><a href="/fake-script">Fake</a></script>
+        <main>Actual page content</main><footer><a href="/contact">Contact</a></footer>
     ''')
     assert page.text == "Actual page content"
-    assert page.links == ["/docs"]
+    assert page.links == ["/docs", "/en/", "/expanded", "/products", "/contact"]
 
 
 async def test_gzip_decoding_is_bounded_before_allocation(monkeypatch):

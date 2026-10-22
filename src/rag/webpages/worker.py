@@ -10,6 +10,7 @@ from contextlib import suppress
 from typing import Protocol
 
 from rag.security.private_data import PrivateDataCipher, StorageBinding
+from rag.ingest.embedder import EmbeddingError
 from rag.ingest.types import IngestChunk, TextEmbedder
 from rag.webpages.fetch import WebpageFetchError, WebpagePage
 from rag.webpages.repository import WebpageClaim, WebpageRepository
@@ -146,7 +147,10 @@ class WebpageWorker:
                 )
         except WebpageFetchError as exc:
             await self._repository.fail(claim, str(exc))
+        except EmbeddingError as exc:
+            await self._repository.fail(claim, str(exc))
         except TimeoutError:
             await self._repository.fail(claim, "webpage synchronization timed out")
-        except Exception:
+        except Exception as exc:
+            logger.warning("Webpage synchronization failed (%s)", type(exc).__name__)
             await self._repository.fail(claim, "webpage synchronization failed")

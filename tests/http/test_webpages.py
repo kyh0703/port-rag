@@ -137,3 +137,15 @@ def test_registration_rejects_empty_urls_invalid_key_and_nonboolean_toggle():
                  {"knowledgeKey": "product", "urls": ["https://example.com/"], "autoSync": "yes"}):
         assert client.post("/documents/webpages", params={"userId": OWNER}, json=body).status_code == 422
     repository.create.assert_not_awaited()
+
+
+@pytest.mark.parametrize("query", [
+    "offset=-1", "offset=1.5", "limit=0", "limit=101", "limit=not-a-number",
+])
+def test_chunk_preview_rejects_unbounded_or_invalid_pages(query):
+    client, repository, _ = client_and_repository()
+    response = client.get(
+        f"/documents/{DOCUMENT_ID}/webpage/chunks?userId={OWNER}&{query}",
+    )
+    assert response.status_code == 422
+    repository.get_chunks.assert_not_awaited()
