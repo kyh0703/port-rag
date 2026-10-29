@@ -12,6 +12,20 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: port
+          POSTGRES_PASSWORD: port
+          POSTGRES_DB: port
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U port -d port"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +42,9 @@ jobs:
       - run: uv sync --frozen
       - run: python3 scripts/prepare_migrations.py
       - run: uv run ruff check .
-      - run: uv run pytest
+      - run: uv run pytest -n 2
+        env:
+          TEST_RAG_DATABASE_URL: postgresql+asyncpg://port:port@127.0.0.1:5432/port
 
       # 이미지가 실제로 빌드되는지만 확인 (push=false).
       # RAG Dockerfile 은 별도 runner stage 를 두지 않는다.

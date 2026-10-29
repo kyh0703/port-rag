@@ -16,6 +16,7 @@ async def test_encrypted_upload_round_trip_and_plaintext_working_file_cleanup(tm
         owner_access=MemoryOwnerAdmission(),
         cipher=PrivateDataCipherFake(),
         staging_root=tmp_path / "staging",
+        legacy_root=tmp_path / "legacy",
     )
     private = "김민수 010-1234-5678".encode() * 10000
     try:
@@ -48,7 +49,8 @@ async def test_openbao_outage_removes_partial_upload_and_never_writes_plaintext(
 
     cipher.encrypt = unavailable
     storage = LocalUploadStorage(
-        owner_access=MemoryOwnerAdmission(), cipher=cipher, staging_root=tmp_path / "staging"
+        owner_access=MemoryOwnerAdmission(), cipher=cipher,
+        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy",
     )
     try:
         with pytest.raises(PrivateDataUnavailable):

@@ -10,4 +10,5 @@ __pycache__/
 *.py[cod]
 
 # Generated from the commit-pinned port-spec migration bundle.
+/alembic/.pytest-migrations.lock
 /alembic/versions/*.py

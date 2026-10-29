@@ -62,11 +62,8 @@ def capability(user_id: str, revision_id: str) -> str:
 
 
 @pytest.fixture
-async def database():
-    url = os.getenv("TEST_RAG_DATABASE_URL")
-    if not url:
-        pytest.skip("requires a disposable migrated pgvector TEST_RAG_DATABASE_URL")
-    engine = create_engine(url)
+async def database(isolated_database_url):
+    engine = create_engine(isolated_database_url)
     sessions = create_session_factory(engine)
     owners = SqlAlchemyOwnerErasure(sessions)
     user_ids = [str(uuid.uuid4()), str(uuid.uuid4())]

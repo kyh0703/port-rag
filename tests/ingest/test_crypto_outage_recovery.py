@@ -38,7 +38,8 @@ async def test_outage_preserves_encrypted_input_and_worker_retries_after_recover
     owners = MemoryOwnerAdmission()
     store = RecoveringStore()
     storage = LocalUploadStorage(
-        owner_access=owners, cipher=private_data_cipher, staging_root=tmp_path / "staging"
+        owner_access=owners, cipher=private_data_cipher,
+        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy",
     )
     path = tmp_path / "fixture.encrypted"
     path.write_text("synthetic parsed fixture")
@@ -74,7 +75,8 @@ async def test_erasure_cancels_delayed_crypto_retry_and_removes_only_owned_input
     store = RecoveringStore()
     store.pending_codes = []
     storage = LocalUploadStorage(
-        owner_access=owners, cipher=private_data_cipher, staging_root=tmp_path / "staging"
+        owner_access=owners, cipher=private_data_cipher,
+        staging_root=tmp_path / "staging", legacy_root=tmp_path / "legacy",
     )
     path = tmp_path / "fixture.encrypted"
     path.write_text("synthetic fixture")

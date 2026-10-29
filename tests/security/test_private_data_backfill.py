@@ -13,8 +13,10 @@ from tests.private_data_fixture import PrivateDataCipherFake
 @pytest.mark.skipif(
     not os.getenv("TEST_RAG_DATABASE_URL"), reason="requires disposable migrated pgvector"
 )
-async def test_backfill_preserves_frozen_data_and_reenables_immutability_after_success():
-    engine = create_engine(os.environ["TEST_RAG_DATABASE_URL"])
+async def test_backfill_preserves_frozen_data_and_reenables_immutability_after_success(
+    isolated_database_url,
+):
+    engine = create_engine(isolated_database_url)
     user_id, document_id, chunk_id, revision_id = [uuid.uuid4() for _ in range(4)]
     cipher = PrivateDataCipherFake()
     try:
@@ -79,8 +81,10 @@ async def test_backfill_preserves_frozen_data_and_reenables_immutability_after_s
 @pytest.mark.skipif(
     not os.getenv("TEST_RAG_DATABASE_URL"), reason="requires disposable migrated pgvector"
 )
-async def test_failed_backfill_rolls_back_rows_and_restores_the_immutable_trigger():
-    engine = create_engine(os.environ["TEST_RAG_DATABASE_URL"])
+async def test_failed_backfill_rolls_back_rows_and_restores_the_immutable_trigger(
+    isolated_database_url,
+):
+    engine = create_engine(isolated_database_url)
     owner, document, revision = [uuid.uuid4() for _ in range(3)]
     cipher = PrivateDataCipherFake()
     original = cipher.encrypt
