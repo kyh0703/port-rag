@@ -1,335 +1,143 @@
-"""Bounded public HTTP fetching with DNS pinning and plain server-HTML extraction."""
+"""Authenticated, bounded HTTP boundary to the standalone JavaScript crawler."""
 
 from __future__ import annotations
 
 import asyncio
-import ipaddress
-import mimetypes
-import re
-import socket
-import unicodedata
-import zlib
-from dataclasses import dataclass
-from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit, urlunsplit
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 import httpx
 
-MAX_URLS = 100
+from rag.security.internal_server import validate_internal_server_key
+from rag.webpages.types import CrawlerUnavailableError, WebpageFetchError, WebpagePage
+from rag.webpages.urls import MAX_URLS, normalize_url, validate_crawler_url
+
 MAX_PAGE_BYTES = 2 * 1024 * 1024
-FETCH_TIMEOUT = 20.0
-DISCOVERY_TIMEOUT = 30.0
-_DISCOVERY_CONCURRENCY = 4
-_NAT64_NETWORKS = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"))
+# Allow JSON escaping of a full page while bounding both transfer and parsing memory.
+MAX_CRAWLER_RESPONSE_BYTES = 16 * 1024 * 1024
+CRAWLER_TIMEOUT = 35.0
+_MAX_ERROR_RESPONSE_BYTES = 4096
+_SOURCE_ERRORS = {
+    "invalid_url": "invalid public HTTP webpage URL",
+    "unsafe_address": "webpage address must be public",
+    "upstream_error": "webpage fetch failed",
+    "invalid_content": "webpage must return HTML",
+    "too_large": "webpage is too large",
+    "too_many_redirects": "webpage has too many redirects",
+    "no_readable_text": "webpage has no readable text",
+}
 
 
-class WebpageFetchError(ValueError):
-    """A public page cannot be fetched safely or has no usable server HTML."""
+class CrawlerClient:
+    """Share a service-only HTTP client; never connect to the requested webpage."""
 
-
-@dataclass(frozen=True)
-class WebpagePage:
-    url: str
-    text: str
-    links: list[str]
-
-
-def _public_address(value: str) -> bool:
-    address = ipaddress.ip_address(value)
-    # Reject transition/mapped forms rather than letting a transport reinterpret them.
-    return bool(address.is_global and not address.is_multicast and not address.is_reserved
-                and not getattr(address, "ipv4_mapped", None)
-                and not getattr(address, "sixtofour", None)
-                and not getattr(address, "teredo", None)
-                and not any(address in network for network in _NAT64_NETWORKS))
-
-
-def _clean_url_reference(url: str) -> str:
-    url = url.strip(" ")
-    if not url or "\\" in url or any(ord(char) <= 32 or 127 <= ord(char) <= 159 for char in url):
-        raise WebpageFetchError("invalid webpage URL")
-    return url
-
-
-def normalize_url(url: str) -> str:
-    url = _clean_url_reference(url)
-    bare = not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.IGNORECASE)
-    if bare:
-        if url.startswith("//") or re.match(r"^https?:", url, re.IGNORECASE):
-            raise WebpageFetchError("invalid public HTTP webpage URL")
-        url = "https://" + url
-    try:
-        parsed = urlsplit(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError
-        if parsed.username is not None or parsed.password is not None or "%" in parsed.netloc:
-            raise ValueError
-        hostname = unicodedata.normalize("NFC", parsed.hostname.lower()).rstrip(".")
-        if not hostname:
-            raise ValueError
-        port = parsed.port
-        if port is not None and port not in {80, 443}:
-            raise ValueError
-        try:
-            address = ipaddress.ip_address(hostname)
-        except ValueError:
-            hostname = httpx.URL(host=hostname).raw_host.decode("ascii").rstrip(".")
-            if (not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", hostname)
-                    or (bare and "." not in hostname)):
-                raise ValueError
-        else:
-            if not _public_address(hostname):
-                raise WebpageFetchError("webpage address must be public")
-            hostname = address.compressed
-        authority = f"[{hostname}]" if ":" in hostname else hostname
-        if port is not None and port != (443 if parsed.scheme == "https" else 80):
-            authority += f":{port}"
-        normalized = urlunsplit((parsed.scheme, authority, parsed.path or "/", parsed.query, ""))
-        if len(normalized.encode("utf-8")) > 4096:
-            raise WebpageFetchError("webpage URL is too long")
-        return normalized
-    except (UnicodeError, ValueError, httpx.InvalidURL) as exc:
-        if isinstance(exc, WebpageFetchError):
-            raise
-        raise WebpageFetchError("invalid public HTTP webpage URL") from exc
-
-
-async def resolve_addresses(host: str, port: int) -> list:
-    return await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
-
-
-@dataclass
-class _HTMLContext:
-    tag: str
-    skip_text: bool
-    skip_links: bool
-    in_main: bool
-    in_section: bool
-
-
-class _TextParser(HTMLParser):
-    _inert = {"head", "title", "script", "style", "noscript", "template", "svg", "canvas"}
-    _chrome_roles = {"navigation", "banner", "contentinfo"}
-    _sections = {"article", "section", "aside"}
-    _blocks = {"p", "div", "section", "article", "main", "header", "footer",
-               "h1", "h2", "h3", "h4", "h5", "h6",
-               "br", "li", "ul", "ol", "tr", "table", "blockquote", "pre", "hr"}
-    _void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
-             "param", "source", "track", "wbr"}
-    _hidden_style = re.compile(
-        r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)"
-        r"\s*(?:!\s*important\s*)?(?:;|$)",
-        re.IGNORECASE,
-    )
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.text: list[str] = []
-        self.main_text: list[str] = []
-        self.has_main = False
-        self.links: list[str] = []
-        self._stack = [_HTMLContext("", False, False, False, False)]
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attributes = dict(attrs)
-        parent = self._stack[-1]
-        role = (attributes.get("role") or "").strip().lower()
-        is_main = tag == "main" or role == "main"
-        skip_links = parent.skip_links or tag in self._inert
-        # Page chrome is not content; headers scoped to articles/sections still are.
-        skip_text = (
-            parent.skip_text or skip_links or tag == "nav" or role in self._chrome_roles
-            or (tag in {"header", "footer"} and not parent.in_section)
-            or "hidden" in attributes
-            or (attributes.get("aria-hidden") or "").strip().lower() == "true"
-            or bool(self._hidden_style.search(attributes.get("style") or ""))
-        )
-        context = _HTMLContext(
-            tag, skip_text, skip_links,
-            parent.in_main or is_main,
-            parent.in_section or is_main or tag in self._sections,
-        )
-        # Real links in menus (including collapsed menus) remain discoverable.
-        if tag == "a" and attributes.get("href") and len(self.links) < 10000 and not skip_links:
-            self.links.append(attributes["href"])
-        if is_main and not skip_text:
-            self.has_main = True
-        if not skip_text and tag in self._blocks:
-            (self.main_text if context.in_main else self.text).append("\n")
-        if tag not in self._void:
-            if len(self._stack) >= 257:
-                raise WebpageFetchError("webpage HTML nesting is too deep")
-            self._stack.append(context)
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.handle_starttag(tag, attrs)
-        if tag not in self._void:
-            self.handle_endtag(tag)
-
-    def handle_endtag(self, tag: str) -> None:
-        for index in range(len(self._stack) - 1, 0, -1):
-            context = self._stack[index]
-            if context.tag == tag:
-                if not context.skip_text and tag in self._blocks:
-                    (self.main_text if context.in_main else self.text).append("\n")
-                del self._stack[index:]
-                break
-
-    def handle_data(self, data: str) -> None:
-        context = self._stack[-1]
-        if not context.skip_text:
-            (self.main_text if context.in_main else self.text).append(data.replace("\x00", ""))
-
-
-def parse_html(url: str, html: str) -> WebpagePage:
-    parser = _TextParser()
-    parser.feed(html)
-    parser.close()
-    content = parser.main_text if parser.has_main else parser.text
-    text = "\n".join(line for raw in "".join(content).splitlines()
-                     if (line := " ".join(raw.split())))
-    if not text:
-        raise WebpageFetchError("webpage has no readable server-rendered text")
-    return WebpagePage(url=url, text=text, links=parser.links)
-
-
-class SafeWebpageFetcher:
-    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None,
-                 max_bytes: int = MAX_PAGE_BYTES) -> None:
-        self._transport = transport
-        self._max_bytes = max_bytes
+    def __init__(self, *, base_url: str, internal_server_key: str,
+                 client: httpx.AsyncClient) -> None:
+        self._base_url = validate_crawler_url(base_url)
+        self._internal_server_key = validate_internal_server_key(internal_server_key)
+        self._client = client
 
     async def fetch(self, url: str) -> WebpagePage:
+        payload = await self._request("/v1/fetch", normalize_url(url))
         try:
-            async with asyncio.timeout(FETCH_TIMEOUT):
-                return await self._fetch(normalize_url(url))
-        except WebpageFetchError:
-            raise
-        except (TimeoutError, httpx.HTTPError, OSError, UnicodeError, ValueError, zlib.error) as exc:
-            raise WebpageFetchError("webpage fetch failed or timed out") from exc
-
-    async def _fetch(self, url: str) -> WebpagePage:
-        for _ in range(6):
-            target = urlsplit(url)
-            port = target.port or (443 if target.scheme == "https" else 80)
-            addresses = await resolve_addresses(target.hostname, port)
-            if not addresses or any(not _public_address(address[4][0]) for address in addresses):
-                raise WebpageFetchError("webpage DNS addresses must all be public")
-            address = addresses[0][4][0]
-            pinned_url = httpx.URL(url).copy_with(host=address)
-            # Connect only to the validated numeric address. TLS SNI AND certificate
-            # verification retain the original hostname (httpcore's sni_hostname).
-            # A new client per hop prevents cookies/connection reuse across hostnames.
-            async with httpx.AsyncClient(
-                transport=self._transport, trust_env=False, follow_redirects=False,
-                timeout=httpx.Timeout(10.0),
-            ) as client:
-                async with client.stream(
-                    "GET", pinned_url,
-                    headers={"Host": target.netloc, "Accept": "text/html,application/xhtml+xml",
-                             "Accept-Encoding": "identity", "User-Agent": "PortKnowledge/1.0"},
-                    extensions={"sni_hostname": target.hostname},
-                ) as response:
-                    if response.status_code in {301, 302, 303, 307, 308}:
-                        location = response.headers.get("location")
-                        if not location:
-                            raise WebpageFetchError("webpage redirect has no location")
-                        url = normalize_url(urljoin(url, _clean_url_reference(location)))
-                        continue
-                    if response.status_code != 200:
-                        raise WebpageFetchError(f"webpage returned HTTP {response.status_code}")
-                    if any(value.split(";", 1)[0].strip().lower() == "attachment"
-                           for value in response.headers.get_list("content-disposition")):
-                        raise WebpageFetchError("webpage must not be an attachment")
-                    media_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-                    if media_type not in {"text/html", "application/xhtml+xml"}:
-                        raise WebpageFetchError("webpage must return HTML")
-                    coding = response.headers.get("content-encoding", "identity").lower()
-                    if coding not in {"identity", "gzip", "deflate"}:
-                        raise WebpageFetchError("unsupported webpage compression")
-                    size = response.headers.get("content-length")
-                    if size is not None and int(size) > self._max_bytes:
-                        raise WebpageFetchError("webpage is too large")
-                    body = bytearray()
-                    decoder = (zlib.decompressobj(16 + zlib.MAX_WBITS if coding == "gzip"
-                                                  else zlib.MAX_WBITS)
-                               if coding != "identity" else None)
-                    transferred = 0
-                    # Raw streaming avoids an HTTP client's unbounded decompressor.
-                    stream = (response.aiter_bytes(chunk_size=65536) if response.is_stream_consumed
-                              else response.aiter_raw(chunk_size=65536))
-                    async for part in stream:
-                        transferred += len(part)
-                        if transferred > self._max_bytes:
-                            raise WebpageFetchError("webpage is too large")
-                        if decoder is not None:
-                            part = decoder.decompress(part, self._max_bytes - len(body) + 1)
-                        if len(body) + len(part) > self._max_bytes:
-                            raise WebpageFetchError("webpage is too large")
-                        body.extend(part)
-                    if decoder is not None and (not decoder.eof or decoder.unused_data):
-                        raise WebpageFetchError("invalid compressed webpage")
-                    encoding = response.encoding or "utf-8"
-                    try:
-                        html = body.decode(encoding, errors="replace")
-                    except LookupError:
-                        html = body.decode("utf-8", errors="replace")
-                    return parse_html(url, html)
-        raise WebpageFetchError("webpage has too many redirects")
+            final_url = _response_url(payload.get("url"))
+            text, links = payload.get("text"), payload.get("links")
+            if (not isinstance(text, str) or not text.strip()
+                    or len(text.encode("utf-8")) > MAX_PAGE_BYTES
+                    or not isinstance(links, list) or len(links) > 10000
+                    or any(not isinstance(link, str) for link in links)):
+                raise ValueError
+            return WebpagePage(url=final_url, text=text, links=links)
+        except ValueError:
+            pass
+        raise CrawlerUnavailableError()
 
     async def discover(self, url: str) -> list[str]:
         url = normalize_url(url)
-        hostname = urlsplit(url).hostname
-        candidates = [url]
-        verified: set[str] = set()
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + DISCOVERY_TIMEOUT
+        payload = await self._request("/v1/discover", url)
         try:
-            async with asyncio.timeout(DISCOVERY_TIMEOUT):
-                page = await self.fetch(url)
-                if loop.time() >= deadline:
-                    raise TimeoutError
-                verified.add(url)
-                seen = {url}
-                for link in page.links:
-                    if len(candidates) == MAX_URLS or loop.time() >= deadline:
-                        break
-                    try:
-                        candidate = normalize_url(urljoin(page.url, _clean_url_reference(link)))
-                    except (ValueError, UnicodeError):
-                        continue
-                    parsed = urlsplit(candidate)
-                    host = parsed.hostname
-                    media_type, _ = mimetypes.guess_type(parsed.path)
-                    if media_type is not None and media_type not in {"text/html", "application/xhtml+xml"}:
-                        continue
-                    if host != hostname and not host.endswith(f".{hostname}"):
-                        continue
-                    if candidate not in seen:
-                        seen.add(candidate)
-                        candidates.append(candidate)
+            urls = payload.get("urls")
+            if not isinstance(urls, list) or not 1 <= len(urls) <= MAX_URLS:
+                raise ValueError
+            root_host = urlsplit(url).hostname
+            seen: set[str] = set()
+            for candidate in urls:
+                candidate = _response_url(candidate)
+                host = urlsplit(candidate).hostname
+                if (host != root_host and not host.endswith(f".{root_host}")) or candidate in seen:
+                    raise ValueError
+                seen.add(candidate)
+            return urls
+        except ValueError:
+            pass
+        raise CrawlerUnavailableError()
 
-                # Only root anchors are candidates. Four workers share this iterator;
-                # failed pages still consume one of the 100 verification slots.
-                pending = iter(candidates[1:])
+    async def _request(self, path: str, url: str) -> dict[str, object]:
+        failure: WebpageFetchError = CrawlerUnavailableError()
+        try:
+            async with asyncio.timeout(CRAWLER_TIMEOUT):
+                async with self._client.stream(
+                    "POST", self._base_url + path,
+                    json={"url": url},
+                    headers={"X-Internal-Server": self._internal_server_key,
+                             "Accept": "application/json", "Accept-Encoding": "identity"},
+                    auth=None, follow_redirects=False, timeout=CRAWLER_TIMEOUT,
+                ) as response:
+                    # Service redirects must never forward the shared key to a source page.
+                    if response.status_code not in {200, 422}:
+                        raise ValueError
+                    limit = (MAX_CRAWLER_RESPONSE_BYTES if response.status_code == 200
+                             else _MAX_ERROR_RESPONSE_BYTES)
+                    payload = await _read_payload(response, limit)
+                    if response.status_code == 200:
+                        return payload
+                    error = payload.get("error")
+                    code = error.get("code") if isinstance(error, dict) else None
+                    if isinstance(code, str) and code in _SOURCE_ERRORS:
+                        failure = WebpageFetchError(_SOURCE_ERRORS[code], code=code)
+        except (httpx.HTTPError, OSError, TimeoutError, ValueError, RuntimeError):
+            pass
+        # Upstream exceptions can carry request URLs, bodies and authentication headers.
+        # Raise only after leaving handlers, without retaining their exception context.
+        raise failure
 
-                async def verify() -> None:
-                    for candidate in pending:
-                        if loop.time() >= deadline:
-                            return
-                        try:
-                            await self.fetch(candidate)
-                        except WebpageFetchError:
-                            continue
-                        if loop.time() < deadline:
-                            verified.add(candidate)
 
-                async with asyncio.TaskGroup() as tasks:
-                    for _ in range(min(_DISCOVERY_CONCURRENCY, len(candidates) - 1)):
-                        tasks.create_task(verify())
-        except TimeoutError as exc:
-            if url not in verified:
-                raise WebpageFetchError("webpage discovery timed out") from exc
-        # TaskGroup drains cancellation before returning; incomplete candidates never
-        # enter verified, and completion order cannot change the selection order.
-        return [candidate for candidate in candidates if candidate in verified]
+def _response_url(value: object) -> str:
+    if (not isinstance(value, str) or not value.startswith(("http://", "https://"))
+            or normalize_url(value) != value):
+        raise ValueError
+    return value
+
+
+async def _read_payload(response: httpx.Response, max_bytes: int) -> dict[str, object]:
+    media_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if (media_type != "application/json"
+            or response.headers.get("content-encoding", "identity").lower() != "identity"):
+        raise ValueError
+    size = response.headers.get("content-length")
+    if size is not None and (not size.isascii() or not size.isdecimal() or int(size) > max_bytes):
+        raise ValueError
+    body = bytearray()
+    # Raw streaming prevents a hostile/incorrect service response from decompressing
+    # before the byte limit. Pre-buffered responses occur in in-process transports.
+    stream = (response.aiter_bytes(chunk_size=65536) if response.is_stream_consumed
+              else response.aiter_raw(chunk_size=65536))
+    async for part in stream:
+        if len(body) + len(part) > max_bytes:
+            raise ValueError
+        body.extend(part)
+    payload = json.loads(body)
+    if not isinstance(payload, dict):
+        raise ValueError
+    return payload
+
+
+@asynccontextmanager
+async def open_crawler_client(*, base_url: str, internal_server_key: str) -> AsyncIterator[CrawlerClient]:
+    """Close the shared pool after HTTP serving and all webpage workers have stopped."""
+    async with httpx.AsyncClient(
+        trust_env=False, follow_redirects=False, timeout=CRAWLER_TIMEOUT,
+    ) as client:
+        yield CrawlerClient(base_url=base_url, internal_server_key=internal_server_key, client=client)

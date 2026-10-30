@@ -11,6 +11,7 @@ from pydantic_settings import (
 )
 import yaml
 from rag.security.internal_server import validate_internal_server_key
+from rag.webpages.urls import validate_crawler_url
 
 CONFIG_ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,6 +81,7 @@ class Settings(BaseSettings):
     INTERNAL_SERVER_KEY: SecretStr
     RAG_RETRIEVAL_CAPABILITY_SECRET: str = Field(..., min_length=32)
     API_INTERNAL_BASE_URL: str = "http://api:8000/api/v1"
+    CRAWLER_URL: str = "http://localhost:8002"
     HTTP_PORT: int = Field(8000, ge=1, le=65535)
     METRICS_ENABLED: bool = True
     EMBEDDING_MODEL: str = "text-embedding-3-small"
@@ -115,6 +117,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_internal_authentication(self) -> "Settings":
         validate_internal_server_key(self.INTERNAL_SERVER_KEY.get_secret_value())
+        self.CRAWLER_URL = validate_crawler_url(self.CRAWLER_URL)
         return self
 
 

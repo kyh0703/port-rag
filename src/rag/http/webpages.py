@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from rag.http.documents import DocumentResponse, DuplicateKnowledgeKey, _to_response
 from rag.http.responses import ApiResponse, ok
 from rag.security.owner_erasure import OwnerAdmission
-from rag.webpages.fetch import SafeWebpageFetcher, WebpageFetchError
+from rag.webpages.fetch import CrawlerClient
+from rag.webpages.types import CrawlerUnavailableError, WebpageFetchError
 from rag.webpages.repository import SyncConflict, WebpageDetail, WebpageRepository
 
 UserIdQuery = Annotated[uuid.UUID, Query(alias="userId")]
@@ -68,7 +69,7 @@ def _detail(detail: WebpageDetail | None) -> WebpageDetailResponse:
     return WebpageDetailResponse(document=_to_response(detail.document), content=detail.content)
 
 
-def create_webpages_router(*, repository: WebpageRepository, fetcher: SafeWebpageFetcher,
+def create_webpages_router(*, repository: WebpageRepository, fetcher: CrawlerClient,
                            owner_access: OwnerAdmission) -> APIRouter:
     router = APIRouter()
 
@@ -78,6 +79,8 @@ def create_webpages_router(*, repository: WebpageRepository, fetcher: SafeWebpag
         await owner_access.assert_active(str(user_id))
         try:
             urls = await fetcher.discover(request.url)
+        except CrawlerUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except WebpageFetchError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         await owner_access.assert_active(str(user_id))

@@ -25,6 +25,9 @@
     노출되지 않고 자체 인증을 구현하지 않는다.
   - `../voice-agent` (LiveKit Agents TS 워커): REST 클라이언트. 매 사용자
     발화마다 `Search`를 호출해 top-k 청크를 LLM 컨텍스트에 주입한다.
+  - `../crawler` (Rust + Chromium): 웹페이지 탐색·JS 실행·본문/링크 수집만 담당한다.
+    RAG는 `CRAWLER_URL`에 내부 키로 인증하며 로컬 크롤러 대체 경로를 두지 않는다.
+    크롤러에는 사용자 DB·임베딩 키·암호화 키를 넘기지 않는다.
   - OpenAI Embeddings API: `text-embedding-3-small` (1536차원). 인제스트와
     검색 쿼리 임베딩 모두 이 모델 하나로 통일한다(차원/모델 불일치 금지).
   - Docling: PDF/docx/pptx/xlsx/md/txt → 구조화 마크다운 파싱. 서비스
@@ -49,8 +52,11 @@
     과거 청크로 대체하거나 사용자 전체 문서로 범위를 확장하지 않는다.
   - 웹페이지 작업은 DB 큐/15분 임대와 claim token으로 복구한다. 모든 게시 단계는
     owner admission 뒤 행 잠금과 token을 확인하고 본문·청크·상태를 함께 commit한다.
-    전체 작업 10분, 각 HTTP 요청 20초 제한이며 공개 DNS 주소를 고정 연결하되
-    원래 TLS hostname 검증을 유지한다. JavaScript 실행·메타데이터 본문 대체는 없다.
+    전체 작업 10분, Rust 크롤러의 페이지 수집 20초, RAG의 내부 HTTP 호출 35초
+    제한을 적용한다. 크롤러가 공개 DNS 주소 검증·고정 연결·원래 TLS hostname
+    검증을 담당하며 JS로 만든 본문도 수집한다. CSS·폰트·이미지·미디어는 요청 전
+    차단하고 메타데이터를 본문으로 대체하지 않는다. 스케줄·변경 감지·청킹·임베딩·
+    원자적 게시·삭제 fence는 RAG가 계속 소유한다.
 
 ## 공유 제약 조건
 

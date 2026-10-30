@@ -18,7 +18,7 @@ from rag.http.documents import SqlAlchemyDocumentRepository
 from rag.knowledge.revisions import KnowledgeRevisionRepository
 from rag.search.repository import SearchRepository
 from rag.security.owner_erasure import OwnerDataErased, SqlAlchemyOwnerErasure
-from rag.webpages.fetch import WebpageFetchError, WebpagePage
+from rag.webpages.types import WebpageFetchError, WebpagePage
 from rag.webpages.repository import SyncConflict, WebpageRepository
 from rag.webpages.worker import WebpageWorker
 

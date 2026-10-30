@@ -175,19 +175,29 @@ provider connectivity/5xx, and other request failures. Upstream response text
 and exception chains are discarded; unexpected webpage failures log only the
 exception class. Existing retries and last-successful-content preservation remain.
 
-Fetching validates all DNS answers and pins one public address for each redirect
-hop while preserving the original HTTP Host and TLS verification hostname.
-Credentials, non-HTTP schemes, private/reserved addresses, and non-web ports are
-rejected; proxy environment settings and cross-hop cookies are not used. Each
-fetch has a 20-second total deadline, at most five redirects, and a 2 MiB wire and
-decoded-body limit (identity/gzip/deflate); combined normalized document text is
-limited to 4 MiB. Visible `main` / `role="main"` content is preferred; documents
-without it use body/fragment text. Page-level headers/footers, navigation landmarks,
-inert elements and explicitly hidden text are excluded; article/section headings
-remain. Real menu links are still discoverable. Only readable server-rendered HTML
-is supported: JavaScript-only pages fail explicitly with
-`webpage has no readable server-rendered text`, without title/description metadata
-fallbacks or browser rendering.
+Page collection belongs to the standalone Rust `crawler` service, not this
+process. RAG calls its authenticated `/v1/fetch` and `/v1/discover` endpoints using
+`CRAWLER_URL` and `X-Internal-Server`; there is no local HTTP/parser fallback.
+The service origin must not contain credentials, a path, query or fragment.
+The shared HTTP pool ignores proxy environment settings, never follows service
+redirects, bounds response reads and uses a 35-second total deadline. Invalid
+source pages remain 422; unavailable, overloaded or invalid crawler responses
+become 503 without exposing upstream bodies, URLs, credentials or exception chains.
+
+The crawler renders JavaScript in isolated Chromium processes. CSS, fonts,
+images and media are blocked before network transfer; scripts and Fetch/XHR
+needed for content remain enabled. Every permitted network request, including
+redirects and subresources, passes public-address validation and DNS pinning while
+retaining the original Host and TLS verification hostname. Chromium direct
+egress is denied; its sandbox remains enabled. A fetch has a 20-second collection
+deadline, at most five redirects and a 2 MiB wire/decoded response limit.
+RAG still limits combined normalized document text to 4 MiB.
+
+Visible `main` / `role="main"` content is preferred; otherwise body text is used.
+Page chrome, navigation text, inert and hidden content are excluded; article
+headings and navigation links remain available. Empty rendered content fails
+without a title/description fallback. CSS-dependent visibility/layout and unusually
+delayed rendering can differ from a fully loaded interactive browser.
 
 Bare domains default to HTTPS. Hostnames use IDN normalization, trailing dots and
 default ports are removed, and fragments do not create separate candidates.
@@ -211,11 +221,11 @@ starting the updated service; recovery is forward-only.
 Focused checks (use a disposable migrated PostgreSQL/pgvector database):
 
 ```bash
-uv run pytest tests/ingest/test_webpage_fetch.py tests/ingest/test_webpage_worker.py tests/http/test_webpages.py
+uv run pytest tests/ingest/test_crawler_client.py tests/ingest/test_webpage_urls.py tests/ingest/test_webpage_worker.py tests/http/test_webpages.py
 TEST_RAG_DATABASE_URL=postgresql+asyncpg://... uv run pytest tests/db/test_webpage_sync.py
 ```
 
-Local end-to-end verification used the actual Web documents screen, NestJS
+Earlier webpage synchronization verification used the actual Web documents screen, NestJS
 document/revision modules, RAG process, disposable pgvector database and real
 OpenAI embeddings. Only the smoke user's session and unrelated billing shell
 were fixtures. The public Tryvox webpage guide produced 2,261 characters and two
@@ -230,12 +240,19 @@ Discovery excludes known non-HTML download/index links (for example PDF, XML and
 `llms.txt`) so they are not preselected as webpages. Selected URLs are still
 validated against their actual response MIME type during synchronization.
 
-Verification: the complete RAG suite passed **197 tests** against the disposable
-migrated database, with the existing Starlette/httpx deprecation warning.
-New fetch and database cases were first collected before their modules/models
-existed (RED). The discovery regression then failed with PDF/XML/text-index links
-in the selectable result; filtering known non-HTML links made all 16 fetch cases
-pass, and a real documentation fetch returned 26 webpage candidates.
+Crawler extraction verification: the complete RAG suite passed **338 tests**
+against an isolated PostgreSQL/pgvector 17 database; one real TLS OpenBao case
+was skipped because that separate fixture was not configured. Changed Python
+integration files passed Ruff. The standalone crawler passed **33 Rust tests**,
+including real Chromium execution with controlled external DNS/HTTP boundaries.
+Review regressions additionally cover direct Chromium preconnect isolation,
+page-realm extraction tampering, public API/CORS headers, shared-page admission,
+readable content with pending requests, open shadow/slot content, and XHTML.
+A live RAG client called the actual macOS Rust binary and nonroot, sandboxed
+Linux/arm64 container against `https://quotes.toscrape.com/js/`, collected its
+JavaScript-created quote text, and discovered `https://example.com/`. Missing
+service authentication returned 401 and a private-address root returned 422.
+No production service was deployed.
 
 ## Configuration files
 
@@ -249,9 +266,11 @@ remain supported.
 
 - `DATABASE_URL`: async SQLAlchemy URL, for example
   `postgresql+asyncpg://port:port@localhost:5432/port`
-- `INTERNAL_SERVER_KEY`: required shared API/RAG internal authentication key
+- `INTERNAL_SERVER_KEY`: required shared API/RAG/crawler internal authentication key
 - `RAG_RETRIEVAL_CAPABILITY_SECRET`: required shared retrieval capability secret
 - `API_INTERNAL_BASE_URL`: trusted API base URL, default `http://api:8000/api/v1`
+- `CRAWLER_URL`: trusted crawler origin; host development `http://localhost:8002`,
+  Compose/Kubernetes `http://crawler:8000`
 - `HTTP_PORT`: default `8000`
 - `EMBEDDING_MODEL`: default `text-embedding-3-small`
 - `EMBEDDING_DIM`: default `1536`

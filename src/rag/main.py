@@ -96,7 +96,7 @@ async def serve() -> None:
     from rag.search.service import SearchService
     from rag.security.retrieval_capability import RetrievalCapabilityVerifier
     from rag.security.owner_erasure import SqlAlchemyOwnerErasure
-    from rag.webpages.fetch import SafeWebpageFetcher
+    from rag.webpages.fetch import open_crawler_client
     from rag.webpages.repository import WebpageRepository
     from rag.webpages.worker import WebpageWorker
 
@@ -146,7 +146,10 @@ async def serve() -> None:
         resources.push_async_callback(worker.stop)
 
         webpage_repository = WebpageRepository(session_factory, private_cipher)
-        webpage_fetcher = SafeWebpageFetcher()
+        webpage_fetcher = await resources.enter_async_context(open_crawler_client(
+            base_url=settings.CRAWLER_URL,
+            internal_server_key=settings.INTERNAL_SERVER_KEY.get_secret_value(),
+        ))
         webpage_worker = WebpageWorker(
             repository=webpage_repository, fetcher=webpage_fetcher, embedder=embedder,
             cipher=private_cipher,

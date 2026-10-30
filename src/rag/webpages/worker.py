@@ -12,7 +12,7 @@ from typing import Protocol
 from rag.security.private_data import PrivateDataCipher, StorageBinding
 from rag.ingest.embedder import EmbeddingError
 from rag.ingest.types import IngestChunk, TextEmbedder
-from rag.webpages.fetch import WebpageFetchError, WebpagePage
+from rag.webpages.types import WebpageFetchError, WebpagePage
 from rag.webpages.repository import WebpageClaim, WebpageRepository
 
 logger = logging.getLogger(__name__)

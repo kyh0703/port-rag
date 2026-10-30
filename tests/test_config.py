@@ -12,6 +12,7 @@ ENV_VARS = [
     "RAG_RETRIEVAL_CAPABILITY_SECRET",
     "OPENAI_API_KEY",
     "API_INTERNAL_BASE_URL",
+    "CRAWLER_URL",
     "HTTP_PORT",
     "EMBEDDING_MODEL",
     "EMBEDDING_DIM",
@@ -175,3 +176,36 @@ database:
 
     with pytest.raises(ValueError, match="duplicate YAML key DATABASE_URL"):
         Settings(_env_file=None)
+
+
+@pytest.mark.parametrize("url", [
+    "crawler:8000", "//crawler:8000", "file:///etc/passwd",
+    "http://user:secret@crawler:8000", "http://@crawler:8000",
+    "http://crawler:8000/v1", "http://crawler:8000?token=secret",
+    "http://crawler:8000#fragment", "http://crawler:8000?", "http://crawler:8000#",
+    "http://crawler:0", "http://crawler:65536", "http://crawler:8000/\n",
+    " http://crawler:8000", "http://crawler\\@other.example",
+])
+def test_crawler_url_rejects_ambiguous_or_credential_bearing_service_origin(url):
+    with pytest.raises(ValidationError) as caught:
+        make_settings(
+            DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
+            CRAWLER_URL=url,
+        )
+    assert "CRAWLER_URL" in str(caught.value)
+    assert "token=secret" not in str(caught.value)
+    assert "user:secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(("url", "expected"), [
+    ("http://localhost:8002", "http://localhost:8002"),
+    ("http://crawler:8000/", "http://crawler:8000"),
+    ("https://crawler.internal", "https://crawler.internal"),
+    ("http://[::1]:8002", "http://[::1]:8002"),
+])
+def test_crawler_url_accepts_configured_internal_service_origin(url, expected):
+    settings = make_settings(
+        DATABASE_URL="postgresql+asyncpg://port:port@localhost:5432/port",
+        CRAWLER_URL=url,
+    )
+    assert settings.CRAWLER_URL == expected

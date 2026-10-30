@@ -17,7 +17,8 @@ from rag.http.documents import (
 )
 from rag.ingest.types import IngestChunk
 from rag.security.owner_erasure import OwnerDataErased, lock_active_owner
-from rag.webpages.fetch import MAX_URLS, WebpageFetchError, normalize_url
+from rag.webpages.types import WebpageFetchError
+from rag.webpages.urls import MAX_URLS, normalize_url
 
 from rag.security.private_data import PrivateDataCipher, StorageBinding, encrypt_json, read_json, read_text
 

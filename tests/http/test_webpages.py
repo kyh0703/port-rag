@@ -6,6 +6,7 @@ import uuid
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rag.http.documents import DocumentRecord
@@ -13,6 +14,7 @@ from rag.http.responses import register_exception_handlers
 from rag.http.webpages import create_webpages_router
 from rag.webpages.repository import SyncConflict, WebpageDetail, WebpageRepository
 from rag.webpages.types import WebpageState
+from rag.webpages.fetch import CrawlerClient
 from tests.fakes import MemoryOwnerAdmission
 from tests.private_data_fixture import PrivateDataCipherFake
 
@@ -149,3 +151,42 @@ def test_chunk_preview_rejects_unbounded_or_invalid_pages(query):
     )
     assert response.status_code == 422
     repository.get_chunks.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("status", "code", "expected_status"), [
+    (422, "unsafe_address", 422),
+    (503, "browser_unavailable", 503),
+])
+async def test_discovery_preserves_public_envelope_and_distinguishes_source_from_service_failure(
+    status, code, expected_status,
+):
+    secret = "https://source.example/private?token=secret"
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(
+            status, json={"error": {"code": code, "message": secret}},
+        )),
+        trust_env=False,
+    ) as upstream:
+        fetcher = CrawlerClient(
+            base_url="http://crawler:8000",
+            internal_server_key="test-only-internal-server-key-0123456789",
+            client=upstream,
+        )
+        app = FastAPI()
+        register_exception_handlers(app)
+        app.include_router(create_webpages_router(
+            repository=AsyncMock(), fetcher=fetcher, owner_access=MemoryOwnerAdmission(),
+        ))
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://rag",
+        ) as client:
+            response = await client.post(
+                "/documents/webpages/discover", params={"userId": OWNER},
+                json={"url": "example.com"},
+            )
+    assert response.status_code == expected_status
+    payload = response.json()
+    assert set(payload) == {"statusCode", "message", "error", "data"}
+    assert payload["statusCode"] == expected_status
+    assert payload["data"] is None
+    assert secret not in response.text

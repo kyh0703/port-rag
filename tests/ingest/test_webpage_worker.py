@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from rag.ingest.embedder import EmbeddingError
-from rag.webpages.fetch import WebpagePage
+from rag.webpages.types import WebpagePage
 from rag.webpages.repository import WebpageClaim
 from rag.webpages.worker import WebpageWorker
 

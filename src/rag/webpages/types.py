@@ -1,12 +1,37 @@
-"""Immutable views of durable webpage state."""
+"""Webpage collection results, safe failures, and durable-state views."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from rag.db.models import DocumentWebpage
+if TYPE_CHECKING:
+    from rag.db.models import DocumentWebpage
+
+
+class WebpageFetchError(ValueError):
+    """A safe collection failure that can be persisted or returned to callers."""
+
+    def __init__(self, message: str, *, code: str = "fetch_failed") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class CrawlerUnavailableError(WebpageFetchError):
+    """The trusted crawler could not supply a valid response."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "webpage crawler is unavailable; try again later", code="crawler_unavailable",
+        )
+
+
+@dataclass(frozen=True)
+class WebpagePage:
+    url: str
+    text: str
+    links: list[str]
 
 
 @dataclass(frozen=True)

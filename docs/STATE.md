@@ -18,6 +18,16 @@ current_version: v1
 - pgvector PostgreSQL 17에서 두 워커의 전체 회귀를 검증했다. 실제 OpenBao에
   의존하는 테스트는 별도 설정이 필요하다. CI도 격리 pgvector 서비스를 쓴다.
 
+## 독립 크롤러
+
+- 웹페이지 네트워크 수집과 JS 렌더링은 `../crawler`의 Rust/Chromium 서버로 분리했다.
+- `CRAWLER_URL`은 호스트 개발에서 `http://localhost:8002`, Compose/Kubernetes에서는
+  `http://crawler:8000`이다. 기존 내부 키를 사용하며 로컬 수집 fallback은 없다.
+- RAG의 지식 등록·동기화 큐·임베딩·게시·삭제 경계는 유지했다.
+- 격리 pgvector 전체 회귀 338개 통과, 별도 TLS OpenBao 1개 미설정으로 skip.
+  실제 RAG HTTP 클라이언트 → macOS Rust 서버 및 sandbox 유지 Linux/arm64
+  컨테이너 → Chromium의 JS 페이지 수집을 검증했다.
+
 ## Completed Versions
 
 (없음)
