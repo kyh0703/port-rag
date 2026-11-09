@@ -21,7 +21,8 @@ if config.config_file_name is not None:
 
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", normalize_asyncpg_url(database_url))
+    # ConfigParser treats URL-encoded password bytes as interpolation syntax.
+    config.set_main_option("sqlalchemy.url", normalize_asyncpg_url(database_url).replace("%", "%%"))
 
 target_metadata = metadata
 

@@ -72,6 +72,15 @@ export PATH="$PWD/node_modules/.bin:$PATH"
 cp .env.example .env
 ```
 
+For an external Supabase database, use the Session pooler on port 5432 with
+`postgresql+asyncpg://…/postgres?ssl=verify-full` (or `sslmode=verify-full`,
+normalized by the service). Set `PGSSLROOTCERT` to a readable CA bundle for both
+the service and Alembic; the Linux image uses `/etc/ssl/certs/ca-certificates.crt`.
+Percent-encode reserved password characters in `DATABASE_URL`. Alembic escapes
+those percent signs internally for ConfigParser; do not replace them with `%%`
+in the environment variable. Both runtime and migration URLs must point to the
+same database. Keep the existing OpenBao keys and credentials.
+
 Register an OpenAI key in the administrator **Key Management** page (`/admin/keys`),
 then configure the trusted API address:
 
