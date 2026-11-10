@@ -99,6 +99,7 @@ async def test_create_revision_preserves_source_payload_in_snapshot() -> None:
     assert revision.id == revision_id
     assert revision.user_id == user_id
     assert revision.chunk_count == 1
+    assert revision.document_ids == (document_id,)
     assert revision.created_at.tzinfo == UTC
     copied = session.added[1]
     assert copied.revision_id == revision_id
@@ -139,3 +140,24 @@ async def test_create_revision_rejects_missing_or_unready_selected_document() ->
             user_id="0197e50a-1234-7abc-8def-0123456789ab",
             document_ids=[uuid.uuid4()],
         )
+
+
+async def test_list_revision_returns_all_selected_sources_once() -> None:
+    from datetime import datetime
+
+    user_id = uuid.UUID("0197e50a-1234-7abc-8def-0123456789ab")
+    file_id = uuid.UUID("0197e50a-1234-7abc-8def-0123456789ac")
+    webpage_id = uuid.UUID("0197e50a-1234-7abc-8def-0123456789ad")
+    session = FakeSession([{
+        "id": uuid.uuid4(), "user_id": user_id, "chunk_count": 3,
+        "created_at": datetime.now(UTC),
+        "frozen_document_ids": [file_id, file_id],
+        "live_webpage_ids": [webpage_id],
+    }])
+    repository = KnowledgeRevisionRepository(
+        FakeSessionFactory(session), cipher=private_data_cipher,
+    )
+
+    revisions = await repository.list(user_id=str(user_id))
+
+    assert revisions[0].document_ids == (file_id, webpage_id)

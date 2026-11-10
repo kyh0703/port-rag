@@ -67,6 +67,7 @@ class KnowledgeRevisionResponse(BaseModel):
     chunk_count: int = Field(alias="chunkCount")
     created_at: datetime = Field(alias="createdAt")
     live_webpage_ids: list[uuid.UUID] = Field(alias="liveWebpageIds")
+    document_ids: list[uuid.UUID] = Field(alias="documentIds")
 
 
 UserIdQuery = Annotated[uuid.UUID, Query(alias="userId")]
@@ -182,4 +183,5 @@ def _to_response(revision: KnowledgeRevisionRecord) -> KnowledgeRevisionResponse
         chunk_count=revision.chunk_count,
         created_at=revision.created_at,
         live_webpage_ids=list(revision.live_webpage_ids),
+        document_ids=list(revision.document_ids),
     )

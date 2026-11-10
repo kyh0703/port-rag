@@ -46,6 +46,7 @@ class KnowledgeRevisionRecord:
     chunk_count: int
     created_at: datetime
     live_webpage_ids: tuple[uuid.UUID, ...] = ()
+    document_ids: tuple[uuid.UUID, ...] = ()
 
 
 class KnowledgeRevisionRepository:
@@ -170,6 +171,7 @@ class KnowledgeRevisionRepository:
             chunk_count=len(rows),
             created_at=created_at,
             live_webpage_ids=live_webpage_ids,
+            document_ids=tuple(sorted(found_ids)),
         )
 
     @staticmethod
@@ -196,12 +198,18 @@ class KnowledgeRevisionRepository:
             .where(KnowledgeRevisionWebpage.revision_id == KnowledgeRevision.id)
             .correlate(KnowledgeRevision).scalar_subquery()
         )
+        frozen_ids = (
+            sa.select(sa.func.array_agg(sa.distinct(KnowledgeRevisionChunk.source_document_id)))
+            .where(KnowledgeRevisionChunk.revision_id == KnowledgeRevision.id)
+            .correlate(KnowledgeRevision).scalar_subquery()
+        )
         return sa.select(
             KnowledgeRevision.id.label("id"),
             KnowledgeRevision.user_id.label("user_id"),
             (frozen_count + live_count).label("chunk_count"),
             KnowledgeRevision.created_at.label("created_at"),
             live_ids.label("live_webpage_ids"),
+            frozen_ids.label("frozen_document_ids"),
         )
 
     @staticmethod
@@ -210,6 +218,9 @@ class KnowledgeRevisionRepository:
             id=row["id"], user_id=row["user_id"], chunk_count=int(row["chunk_count"]),
             created_at=row["created_at"],
             live_webpage_ids=tuple(sorted(row["live_webpage_ids"] or [])),
+            document_ids=tuple(sorted(
+                set(row["frozen_document_ids"] or []) | set(row["live_webpage_ids"] or [])
+            )),
         )
 
     async def get(
